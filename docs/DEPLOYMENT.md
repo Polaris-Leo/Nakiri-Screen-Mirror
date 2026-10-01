@@ -1,0 +1,190 @@
+# Nakiri Screen Mirror 部署文档
+
+项目由两部分组成：
+
+- 根目录的 React Router 前端，构建后是静态文件；
+- `worker/` 下的 Cloudflare Worker，负责 `/connect` WebSocket 信令和 Durable Object 房间。
+
+前端可以部署在 Linux/Nginx、Cloudflare Pages 或其他静态托管服务；信令服务必须部署到 Cloudflare Workers。两部分都需要 HTTPS，前端通过 `wss://` 连接 Worker。
+
+## 一、准备工作
+
+需要准备 Cloudflare 账号、已接入 Cloudflare 的域名、Node.js 20+，以及前端域名（如 `mirror.example.com`）和 Worker 信令域名（如 `signal.example.com`）。
+
+## 二、部署 Cloudflare Worker
+
+在本地或服务器执行：
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npm run deploy
+```
+
+也可以使用仓库约定的 pnpm：
+
+```bash
+corepack enable
+pnpm install --frozen-lockfile
+pnpm exec wrangler login
+pnpm deploy
+```
+
+`worker/wrangler.toml` 已配置 `SignallingServer` Durable Object 和 SQLite 迁移。部署完成后，Wrangler 会输出类似：
+
+```text
+https://nakiri-screen-mirror-signaling.<your-subdomain>.workers.dev
+```
+
+WebSocket 地址为：
+
+```text
+wss://nakiri-screen-mirror-signaling.<your-subdomain>.workers.dev/connect?id=123456
+```
+
+生产环境推荐配置自定义域名。在 `worker/wrangler.toml` 末尾增加：
+
+```toml
+[[routes]]
+pattern = "signal.example.com"
+custom_domain = true
+```
+
+然后重新执行 `npm run deploy`。也可以在 Cloudflare 控制台的 **Workers & Pages → nakiri-screen-mirror-signaling → Settings → Domains & Routes** 中添加 Custom Domain。
+
+## 三、构建前端
+
+信令地址通过 `VITE_SIGNALING_URL` 配置。
+
+PowerShell：
+
+```powershell
+$env:VITE_SIGNALING_URL = "wss://signal.example.com/connect"
+npm install
+npm run typecheck
+npm run build
+```
+
+Linux/macOS：
+
+```bash
+VITE_SIGNALING_URL=wss://signal.example.com/connect npm install
+VITE_SIGNALING_URL=wss://signal.example.com/connect npm run typecheck
+VITE_SIGNALING_URL=wss://signal.example.com/connect npm run build
+```
+
+静态文件位于：
+
+```text
+build/client/
+```
+
+不设置 `VITE_SIGNALING_URL` 时，会回退到原来的 `wss://signaling.pexni.com/connect`。
+
+## 四、部署到 Nginx
+
+Ubuntu 示例：
+
+```bash
+sudo apt update
+sudo apt install -y nginx
+sudo mkdir -p /var/www/webrtc-screen-mirror
+rsync -av --delete build/client/ user@your-server:/var/www/webrtc-screen-mirror/
+```
+
+创建 `/etc/nginx/sites-available/webrtc-screen-mirror`：
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name mirror.example.com;
+
+    root /var/www/webrtc-screen-mirror;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+启用并检查：
+
+```bash
+sudo ln -s /etc/nginx/sites-available/webrtc-screen-mirror /etc/nginx/sites-enabled/webrtc-screen-mirror
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+配置 HTTPS：
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d mirror.example.com
+```
+
+生产环境使用 `https://mirror.example.com` 访问。浏览器屏幕共享通常要求 HTTPS。
+
+## 五、验证部署
+
+1. 打开前端页面并查看开发者工具 Network 面板。
+2. 确认 WebSocket 请求为 `wss://signal.example.com/connect?id=六位数字`。
+3. 确认 WebSocket 握手返回 `101 Switching Protocols`。
+4. 在第二台设备输入第一台设备显示的投屏码。
+5. 允许屏幕共享权限并确认观看端出现画面。
+
+当前 Worker 只处理 `/connect`，访问其他路径返回 404 是预期行为。
+
+## 六、常见问题
+
+### 页面打开但连接服务器失败
+
+- 检查 `VITE_SIGNALING_URL` 是否正确；
+- 确认使用 `wss://` 而不是 `ws://`；
+- 检查 Worker 自定义域名、DNS 和证书；
+- 确认前端和 Worker 已一起更新。
+
+### 页面刷新后 404
+
+检查 Nginx 或静态托管服务是否配置了 SPA fallback，将未知路径回退到 `/index.html`。
+
+### 信令成功但 WebRTC 失败
+
+先在同一局域网测试，并关闭可能拦截 UDP 的 VPN 或企业代理。项目目前只有 STUN，没有 TURN；严格 NAT 或 UDP 受限环境可能需要后续配置 TURN 服务。
+
+### Worker 返回 400
+
+投屏码必须是 6 位数字。缺失、长度错误或包含非数字字符的 `id` 会被拒绝。
+
+## 七、更新流程
+
+Worker 更新：
+
+```bash
+cd worker
+npm install
+npm run deploy
+```
+
+前端更新：
+
+```bash
+npm install
+npm run typecheck
+npm run build
+rsync -av --delete build/client/ user@your-server:/var/www/webrtc-screen-mirror/
+sudo systemctl reload nginx
+```
+
+修改 Worker 房间路由时，前端和 Worker 应一起发布，避免旧前端继续使用旧的固定房间模型。
+
+## 八、安全注意事项
+
+- 不要提交 Cloudflare API Token、密码或 TURN 凭据；
+- 6 位投屏码只是临时标识，不是身份认证；
+- 不要删除 `worker/wrangler.toml` 中已有的 Durable Object 迁移记录；
+- 生产环境建议使用 Cloudflare Custom Domain，而不是直接依赖 `workers.dev`。
+
+参考：[Cloudflare Workers Wrangler 配置](https://developers.cloudflare.com/workers/wrangler/configuration/)、[Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)、[Durable Objects 入门](https://developers.cloudflare.com/durable-objects/get-started/)。
