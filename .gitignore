@@ -9,6 +9,10 @@
 /.react-router/
 /build/
 
+# Local deployment environment and file-backed secrets
+/.env
+/secrets/
+
 # Local isolated worktrees
 /.worktrees/
 /.superpowers/

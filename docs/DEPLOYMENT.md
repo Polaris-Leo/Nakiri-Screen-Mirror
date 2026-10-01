@@ -6,7 +6,7 @@
 
 屏幕共享可选择均衡（1080p/30）、高清（1080p/60）、超清（1440p/60）和 4K（2160p/30）。这是采集目标和发送码率上限，不是保证值：浏览器、显示器、编码器、上行带宽或接收设备不支持时，实际画质会降低；不支持所选采集约束时会回退到均衡档。较高档位会增加 CPU/GPU、带宽和耗电。
 
-Node.js 信令服务、Nginx 和 EdgeOne 只承载 WebSocket 信令，不转发视频/音频流。媒体由两台浏览器通过 WebRTC 尽可能直接传输。项目当前配置 STUN、未配置 TURN，因此严格 NAT、企业防火墙或 UDP 受限网络可能导致 ICE 失败；信令可连通并不代表 P2P 媒体一定可达。出现此类问题时，先查看诊断面板的 ICE 状态和候选线路，并跨不同网络验证；必要时另行部署 TURN 中继（此时媒体会经过 TURN）。
+Node.js 信令服务、Nginx 和 EdgeOne 只承载 WebSocket 信令，不转发视频/音频流。媒体由两台浏览器通过 WebRTC 尽可能直接传输；Docker Compose 同时运行 coturn 作为 TURN 中继回退，严格 NAT、企业防火墙或 UDP 受限网络下媒体可能直接经 TURN 中继。TURN 媒体连接由浏览器直接访问 coturn，不经 EdgeOne。信令可连通并不代表 P2P 媒体一定可达；出现问题时，先查看诊断面板的 ICE 状态和候选线路，并跨不同网络验证。
 
 重连过程中信令状态会显示为 `reconnecting`，并显示已重试次数和最近错误。部署端的 `/healthz` 仍只是 HTTP 存活检查；要确认 WSS 握手和信令转发，请按下方 `WSS_URL=... bash scripts/deploy-docker.sh` 探测说明执行。
 
@@ -149,6 +149,12 @@ docker.xuanyuan.run/library/node:20-alpine
 ```
 
 后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
+
+#### TURN 中继、端口与密钥
+
+Compose 中的 `coturn` 是 WebRTC 媒体的直接 TURN 中继回退；EdgeOne 只代理前端到 Node 信令服务的 HTTP/WSS，TURN 的媒体流不经过 EdgeOne。准备本机 `.env`（从 `.env.example` 复制）并按实际部署填写 `TURN_EXTERNAL_IP`、`TURN_REALM` 和 `TURN_URLS`。浏览器使用 `turn:turn.example.com:3478?transport=udp` 与 `turn:turn.example.com:3478?transport=tcp` 直接连接 coturn；将 DNS 名称替换为实际 TURN 主机名。防火墙需允许 UDP/TCP 3478 以及 UDP 49160–49200 中继端口。
+
+`TURN_SECRET_FILE` 是 Docker 主机上的文件路径，默认 `./secrets/turn_secret`；Compose 将同一文件作为 file-backed secret 挂载到 Node 和 coturn 的 `/run/secrets/turn_secret`。创建高熵随机密钥并限制主机文件权限，例如 Linux 上 `install -d -m 700 secrets && openssl rand -hex 32 > secrets/turn_secret && chmod 600 secrets/turn_secret`。该文件及 `.env` 已加入 `.gitignore`；不要把密钥写入前端环境变量、镜像、命令行参数、日志或版本控制。coturn 启动时在容器内以 `0600` 创建运行时配置并从挂载密钥启用 TURN REST shared-secret 认证。该配置仅开放 UDP relay range `49160-49200`，禁用匿名访问和管理 CLI。当前 Compose 未发布 TLS 端口；仅在配置证书文件及相应 coturn TLS 选项后再启用 `5349/TCP`。
 
 如果已经配置好 Nginx 或 EdgeOne 的公网域名，部署脚本会在交互终端中询问公网 WSS 地址；输入 `wss://.../connect` 后，部署结束时会执行端到端 WebSocket 探针，直接回车则跳过。自动化/非交互环境不会等待输入，可通过 `WSS_URL` 显式启用探针：
 
