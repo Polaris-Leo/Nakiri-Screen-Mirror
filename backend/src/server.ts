@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { isConnectionId } from "./protocol.js";
+import { dispatchSocketMessage } from "./messageHandler.js";
 import { SignallingHub } from "./signallingHub.js";
 
 const port = Number(process.env.PORT ?? 8080);
@@ -8,8 +9,17 @@ const host = process.env.HOST ?? "0.0.0.0";
 const hub = new SignallingHub();
 const httpServer = createServer((request, response) => {
 	if (request.url === "/healthz") {
-		response.writeHead(200, { "content-type": "application/json" });
-		response.end(JSON.stringify({ status: "ok" }));
+		response.writeHead(200, {
+			"cache-control": "no-store",
+			"content-type": "application/json",
+		});
+		response.end(
+			JSON.stringify({
+				status: "ok",
+				service: "nakiri-signalling",
+				websocket: { path: "/connect", protocol: "websocket" },
+			}),
+		);
 		return;
 	}
 	response.writeHead(404);
@@ -41,7 +51,7 @@ httpServer.on("upgrade", (request, socket, head) => {
 	webSocketServer.handleUpgrade(request, socket, head, (client: WebSocket) => {
 		hub.register(id, client);
 		client.on("message", (message) =>
-			hub.handleMessage(client, rawDataToText(message)),
+			dispatchSocketMessage(hub, client, rawDataToText(message)),
 		);
 		client.on("close", () => hub.unregister(client));
 		client.on("error", () => hub.unregister(client));

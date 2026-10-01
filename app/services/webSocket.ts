@@ -6,6 +6,14 @@ interface WebSocketMessage<T = unknown> {
 	data: T;
 }
 
+export function getReconnectDelay(attempt: number, randomValue = Math.random()): number {
+	const baseDelay = Math.min(1000 * 2 ** attempt, 24_000);
+	const jitter = Math.floor(
+		baseDelay * 0.25 * Math.min(1, Math.max(0, randomValue)),
+	);
+	return Math.min(baseDelay + jitter, 30_000);
+}
+
 class WebSocketService {
 	private static instance: WebSocketService;
 	private ws: WebSocket | null = null;
@@ -13,8 +21,7 @@ class WebSocketService {
 	private reconnectAttempts = 0;
 	private connectionGeneration = 0;
 	private manualClose = false;
-	private maxRetryInterval = 300000;
-	private maxReconnectAttempts = 5;
+	private readonly maxReconnectInterval = 30_000;
 	private heartbeatInterval: number | null = null;
 	private reconnectTimeout: number | null = null;
 	private heartbeatTimeout: number | null = null;
@@ -57,23 +64,22 @@ class WebSocketService {
 
 	private scheduleReconnect() {
 		if (this.manualClose || !this.url) return;
-		if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-			this.updateState("disconnected");
-			return;
-		}
+		if (this.reconnectTimeout !== null) return;
 
 		const backoffTime = Math.min(
-			1000 * 2 ** this.reconnectAttempts,
-			this.maxRetryInterval,
+			getReconnectDelay(this.reconnectAttempts),
+			this.maxReconnectInterval,
 		);
-		if (this.reconnectTimeout !== null) {
-			clearTimeout(this.reconnectTimeout);
-		}
+		this.updateState("reconnecting");
 
 		const generation = this.connectionGeneration;
 		this.reconnectTimeout = window.setTimeout(() => {
+			this.reconnectTimeout = null;
 			if (generation !== this.connectionGeneration || this.manualClose) return;
 			this.reconnectAttempts++;
+			useWebSocketStore.getState().updateDiagnostics({
+				reconnectAttempts: this.reconnectAttempts,
+			});
 			this.reconnect();
 		}, backoffTime);
 	}
@@ -83,6 +89,21 @@ class WebSocketService {
 	}
 
 	connect(url: string) {
+		const socket = this.ws;
+		if (
+			socket &&
+			(socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) &&
+			this.url === url
+		) {
+			this.manualClose = false;
+			useWebSocketStore.getState().updateDiagnostics({ currentUrl: url });
+			if (socket.readyState === WebSocket.OPEN) {
+				this.updateState("connected");
+			}
+			return socket;
+		}
+
+		const previousUrl = this.url;
 		this.url = url;
 		this.manualClose = false;
 		this.connectionGeneration += 1;
@@ -92,11 +113,9 @@ class WebSocketService {
 			clearTimeout(this.reconnectTimeout);
 			this.reconnectTimeout = null;
 		}
+		useWebSocketStore.getState().updateDiagnostics({ currentUrl: url });
 
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			this.updateState("connected");
-			return this.ws;
-		}
+		this.stopHeartbeat();
 		this.ws?.close();
 
 		const socket = new WebSocket(url);
@@ -106,20 +125,30 @@ class WebSocketService {
 		socket.onopen = () => {
 			if (generation !== this.connectionGeneration || this.ws !== socket) return;
 			this.reconnectAttempts = 0;
+			useWebSocketStore.getState().updateDiagnostics({
+				reconnectAttempts: 0,
+				lastError: null,
+				lastConnectedAt: Date.now(),
+			});
 			this.updateState("connected");
 			this.startHeartbeat();
 		};
 
 		socket.onclose = () => {
 			if (generation !== this.connectionGeneration || this.ws !== socket) return;
-			this.updateState("disconnected");
+			useWebSocketStore.getState().updateDiagnostics({ lastDisconnectedAt: Date.now() });
 			this.stopHeartbeat();
 			this.scheduleReconnect();
 		};
 
-		socket.onerror = () => {
+		socket.onerror = (error) => {
 			if (generation !== this.connectionGeneration || this.ws !== socket) return;
-			this.updateState("disconnected");
+			useWebSocketStore.getState().updateDiagnostics({
+				lastError:
+					error instanceof Error
+						? error.message
+						: "WebSocket connection error",
+			});
 		};
 
 		socket.onmessage = (msg) => {
@@ -166,12 +195,17 @@ class WebSocketService {
 		this.ws = null;
 		this.url = null;
 		this.reconnectAttempts = 0;
+		useWebSocketStore.getState().updateDiagnostics({
+			reconnectAttempts: 0,
+			currentUrl: null,
+		});
 		this.updateState("disconnected");
 	}
 
-	sendMessage<T>(msg: WebSocketMessage<T>) {
-		if (this.ws?.readyState !== WebSocket.OPEN) return;
+	sendMessage<T>(msg: WebSocketMessage<T>): boolean {
+		if (this.ws?.readyState !== WebSocket.OPEN) return false;
 		this.ws.send(JSON.stringify(msg));
+		return true;
 	}
 
 	registerHandler(type: string, handler: (data: unknown) => void) {

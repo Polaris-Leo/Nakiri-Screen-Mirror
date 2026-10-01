@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { webSocketService } from "../../app/services/webSocket";
+import { useWebSocketStore } from "../../app/stores/webSocket";
 
 class FakeWebSocket {
 	static instances: FakeWebSocket[] = [];
@@ -39,6 +40,14 @@ describe("WebSocketService lifecycle", () => {
 		(globalThis as any).WebSocket = FakeWebSocket;
 		(globalThis as any).window = globalThis;
 		webSocketService.disconnect();
+		useWebSocketStore.setState({
+			webSocketState: "disconnected",
+			reconnectAttempts: 0,
+			lastError: null,
+			lastConnectedAt: null,
+			lastDisconnectedAt: null,
+			currentUrl: null,
+		});
 	});
 
 	afterEach(() => {
@@ -75,11 +84,59 @@ describe("WebSocketService lifecycle", () => {
 		webSocketService.connect("wss://example.test/connect?id=123456");
 		const socket = FakeWebSocket.instances[0];
 
-		webSocketService.sendMessage({ type: "offer", to: "654321", data: {} });
+		expect(webSocketService.sendMessage({ type: "offer", to: "654321", data: {} })).toBe(false);
 		expect(socket.send).not.toHaveBeenCalled();
 
 		socket.open();
-		webSocketService.sendMessage({ type: "offer", to: "654321", data: {} });
+		expect(webSocketService.sendMessage({ type: "offer", to: "654321", data: {} })).toBe(true);
 		expect(socket.send).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps the existing socket message handler when connect repeats the same URL", () => {
+		const handler = vi.fn();
+		webSocketService.registerHandler("offer", handler);
+		const url = "wss://example.test/connect?id=123456";
+		webSocketService.connect(url);
+		const firstSocket = FakeWebSocket.instances[0];
+		firstSocket.open();
+
+		const secondSocket = webSocketService.connect(url);
+		firstSocket.onmessage?.({ data: JSON.stringify({ type: "offer" }) } as MessageEvent);
+
+		expect(secondSocket).toBe(firstSocket);
+		expect(FakeWebSocket.instances).toHaveLength(1);
+		expect(handler).toHaveBeenCalledTimes(1);
+	});
+
+	it("enters reconnecting state and retries beyond five failures", () => {
+		webSocketService.connect("wss://example.test/connect?id=123456");
+
+		for (let attempt = 0; attempt < 7; attempt++) {
+			FakeWebSocket.instances.at(-1)?.closeEvent();
+			expect(useWebSocketStore.getState().webSocketState).toBe("reconnecting");
+			vi.advanceTimersByTime(30_000);
+		}
+
+		expect(FakeWebSocket.instances.length).toBeGreaterThan(5);
+		expect(useWebSocketStore.getState().reconnectAttempts).toBe(7);
+	});
+
+	it("caps jittered reconnect delay at 30 seconds", async () => {
+		const { getReconnectDelay } = await import("../../app/services/webSocket");
+		expect(getReconnectDelay(30, 1)).toBe(30_000);
+		expect(getReconnectDelay(0, 1)).toBe(1_250);
+	});
+
+	it("clears the heartbeat timeout when pong arrives", () => {
+		webSocketService.connect("wss://example.test/connect?id=123456");
+		const socket = FakeWebSocket.instances[0];
+		socket.open();
+
+		vi.advanceTimersByTime(15_000);
+		expect(socket.send).toHaveBeenCalledWith("ping");
+		socket.onmessage?.({ data: "pong" });
+		vi.advanceTimersByTime(5_000);
+
+		expect(socket.close).not.toHaveBeenCalled();
 	});
 });

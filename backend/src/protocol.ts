@@ -11,6 +11,13 @@ export interface SignallingMessage {
 	data: unknown;
 }
 
+export function isControlMessage(
+	message: string | Uint8Array,
+): "ping" | "pong" | null {
+	const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
+	return raw === "ping" || raw === "pong" ? raw : null;
+}
+
 export function isConnectionId(value: string | null): value is string {
 	return typeof value === "string" && /^\d{6}$/.test(value);
 }
