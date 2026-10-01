@@ -42,7 +42,7 @@ Automated Vitest execution remains unverified because `pnpm` is absent and direc
 ## Commit range
 
 - **BASE:** `24f3ea8d7b97812d316ac6ba5610dbe2a8533d5e`
-- **HEAD:** `47011741db04d23eb9b0294b3fc796e0fecdaba2`
+- **HEAD:** `2a213f1195c49b8bb718550ca3ee131b848cb8be` (fix implementation commit; report-only follow-up follows)
 
 ## Changes
 
