@@ -286,11 +286,13 @@ export function ConnectionDiagnostics({
 			{captureError && <p>采集/连接错误：{captureError}</p>}
 			<p>
 				候选线路：
-				{peer.stats?.candidateType
-					? peer.stats.candidateType === "relay"
-						? "TURN 中继"
-						: "direct"
-					: unavailable}
+				{peer.stats?.candidateType === "relay"
+					? "TURN 中继"
+					: peer.stats?.candidateType === "host" ||
+						peer.stats?.candidateType === "srflx" ||
+						peer.stats?.candidateType === "prflx"
+						? "direct"
+						: unavailable}
 			</p>
 			<p>
 				RTT：

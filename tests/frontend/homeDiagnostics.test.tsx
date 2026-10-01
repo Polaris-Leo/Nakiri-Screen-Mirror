@@ -37,6 +37,20 @@ describe("connection diagnostics", () => {
 		expect(html).toContain("视频流不经过信令服务器");
 	});
 
+	it("renders unknown ICE candidate types as unavailable", () => {
+		useWebRTCStore.setState({
+			stats: { candidateType: "future-candidate-type", rttMs: 42 },
+		});
+		const html = renderToStaticMarkup(
+			<ConnectionDiagnostics
+				signaling={useWebSocketStore.getState()}
+				peer={useWebRTCStore.getState()}
+			/>,
+		);
+		expect(html).toContain("候选线路：暂无数据");
+		expect(html).not.toContain("候选线路：direct");
+	});
+
 	it("renders unavailable media stats safely", () => {
 		const html = renderToStaticMarkup(
 			<ConnectionDiagnostics

@@ -38,7 +38,8 @@ export function normalizeWebRTCStats(
 			stat.type === "remote-candidate" &&
 			stat.id === selectedPair?.remoteCandidateId,
 	);
-	void remoteCandidate;
+	// RTT is a selected-pair metric and remains useful even if the remote row
+	// is missing; path classification requires resolving both candidate rows.
 	const rttSeconds = numberOrUndefined(selectedPair?.currentRoundTripTime);
 	const rttMs = rttSeconds === undefined ? undefined : numberOrUndefined(rttSeconds * 1000);
 
@@ -50,7 +51,8 @@ export function normalizeWebRTCStats(
 		bytesSent: numberOrUndefined(media?.bytesSent),
 		bytesReceived: numberOrUndefined(media?.bytesReceived),
 		candidateType:
-			typeof localCandidate?.candidateType === "string"
+			localCandidate && remoteCandidate &&
+			typeof localCandidate.candidateType === "string"
 				? localCandidate.candidateType
 				: undefined,
 		rttMs,
