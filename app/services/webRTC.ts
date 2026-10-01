@@ -302,7 +302,9 @@ class WebRTCService {
 		const update = async () => {
 			if (this.peerConnection !== peerConnection) return;
 			try {
-				const stats = normalizeWebRTCStats(await peerConnection.getStats(), role);
+				const report = await peerConnection.getStats();
+				if (this.peerConnection !== peerConnection) return;
+				const stats = normalizeWebRTCStats(report, role);
 				const bytes = role === "sender" ? stats.bytesSent : stats.bytesReceived;
 				const now = Date.now();
 				let bitrate = stats.bitrate;
