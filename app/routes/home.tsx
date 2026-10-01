@@ -68,6 +68,7 @@ const schema = z.object({
 export default function Home() {
 	const { id } = useAuthStore();
 	const webrtc = useWebRTCStore();
+	const signaling = useWebSocketStore();
 	const { remoteStream, connectionState } = webrtc;
 	const [quality, setQuality] = useState<ScreenQuality>("hd");
 
@@ -108,7 +109,7 @@ export default function Home() {
 	return (
 		<VStack p={4} pt={24} h="dvh">
 			<WebSocketStateComponent />
-			<ConnectionDiagnostics signaling={useWebSocketStore()} peer={webrtc} />
+			<ConnectionDiagnostics signaling={signaling} peer={webrtc} />
 			<Heading fontSize="xl">投屏码</Heading>
 			<Button
 				size="xl"
@@ -269,7 +270,7 @@ export function ConnectionDiagnostics({
 				{peer.signalingState ?? unavailable}
 			</p>
 			<p>
-				角色/设备：{peer.role ?? unavailable} / {peer.peerId ?? unavailable}
+				角色/对端房间码：{peer.role ?? unavailable} / {peer.peerId ?? unavailable}
 			</p>
 			<p>候选线路：{peer.stats?.candidateType ?? unavailable}</p>
 			<p>
