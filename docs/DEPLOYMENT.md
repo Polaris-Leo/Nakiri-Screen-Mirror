@@ -45,8 +45,17 @@ VITE_SIGNALING_URL=wss://signal.example.com/connect npm run build
 将仓库上传到 ECS，在项目根目录执行：
 
 ```bash
+docker login docker.xuanyuan.run
 bash scripts/deploy-docker.sh
 ```
+
+本项目 Dockerfile 使用轩辕镜像的 Node.js 基础镜像：
+
+```text
+docker.xuanyuan.run/library/node:20-alpine
+```
+
+由于该镜像仓库要求登录，首次部署或凭据失效后需要重新执行 `docker login docker.xuanyuan.run`。仅在 `/etc/docker/daemon.json` 中配置 `registry-mirrors` 不会自动替代 Dockerfile 中的镜像地址。
 
 脚本会自动检查 Docker 和 Compose、构建镜像、启动服务、清理孤儿容器，并轮询健康检查。健康检查返回 `{"status":"ok"}` 即表示 Node.js 信令服务已启动。后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
 
