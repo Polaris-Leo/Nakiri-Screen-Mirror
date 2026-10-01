@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { isConnectionId } from "./protocol.js";
+import { dispatchSocketMessage } from "./messageHandler.js";
 import { SignallingHub } from "./signallingHub.js";
 
 const port = Number(process.env.PORT ?? 8080);
@@ -50,7 +51,7 @@ httpServer.on("upgrade", (request, socket, head) => {
 	webSocketServer.handleUpgrade(request, socket, head, (client: WebSocket) => {
 		hub.register(id, client);
 		client.on("message", (message) =>
-			hub.handleMessage(client, rawDataToText(message)),
+			dispatchSocketMessage(hub, client, rawDataToText(message)),
 		);
 		client.on("close", () => hub.unregister(client));
 		client.on("error", () => hub.unregister(client));
