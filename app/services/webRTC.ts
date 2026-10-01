@@ -134,6 +134,7 @@ class WebRTCService {
 					useWebRTCStore.getState().setDiagnostics({
 						lastError: "信令连接暂不可用，协商请求未发送",
 					});
+					this.requestSenderRecovery();
 				}
 			} catch (error) {
 				this.recordError("创建 WebRTC offer 失败", error);

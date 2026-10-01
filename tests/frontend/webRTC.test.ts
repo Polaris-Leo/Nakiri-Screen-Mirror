@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { webRTCService } from "../../app/services/webRTC";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SCREEN_QUALITY_PRESETS } from "../../app/media";
-import { useWebSocketStore } from "../../app/stores/webSocket";
+import { webRTCService } from "../../app/services/webRTC";
+import { webSocketService } from "../../app/services/webSocket";
 import { useWebRTCStore } from "../../app/stores/webRTC";
+import { useWebSocketStore } from "../../app/stores/webSocket";
 
 class FakePeerConnection {
 	static instances: FakePeerConnection[] = [];
@@ -59,6 +60,10 @@ class FakeSessionDescription {
 }
 
 describe("WebRTCService lifecycle", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	beforeEach(() => {
 		FakePeerConnection.instances = [];
 		(globalThis as any).RTCPeerConnection = FakePeerConnection;
@@ -159,5 +164,43 @@ describe("WebRTCService lifecycle", () => {
 
 		expect(FakePeerConnection.instances).toHaveLength(2);
 		expect(FakePeerConnection.instances[1].addTrack).toHaveBeenCalledWith(track, expect.anything());
+	});
+
+	it("recreates a sender connection when offer signaling fails and reconnects", async () => {
+		const track = {
+			kind: "video",
+			stop: vi.fn(),
+		} as unknown as MediaStreamTrack;
+		webRTCService.setLocalStream({
+			getTracks: () => [track],
+		} as unknown as MediaStream);
+		const sendMessage = vi
+			.spyOn(webSocketService, "sendMessage")
+			.mockReturnValue(false);
+		const first = (await webRTCService.connect(
+			"123456",
+		)) as unknown as FakePeerConnection;
+
+		await first.onnegotiationneeded?.();
+
+		expect(sendMessage).toHaveBeenCalledWith({
+			type: "offer",
+			to: "123456",
+			data: { type: "offer", sdp: "offer" },
+		});
+		expect(useWebRTCStore.getState().lastError).toBe(
+			"信令连接暂不可用，协商请求未发送",
+		);
+		expect(FakePeerConnection.instances).toHaveLength(1);
+
+		useWebSocketStore.setState({ webSocketState: "connected" });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(FakePeerConnection.instances).toHaveLength(2);
+		expect(FakePeerConnection.instances[1].addTrack).toHaveBeenCalledWith(
+			track,
+			expect.anything(),
+		);
 	});
 });
