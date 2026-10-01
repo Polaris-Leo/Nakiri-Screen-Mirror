@@ -89,18 +89,19 @@ class WebSocketService {
 	}
 
 	connect(url: string) {
-		const socket = this.ws;
+		const existingSocket = this.ws;
 		if (
-			socket &&
-			(socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) &&
+			existingSocket &&
+			(existingSocket.readyState === WebSocket.OPEN ||
+				existingSocket.readyState === WebSocket.CONNECTING) &&
 			this.url === url
 		) {
 			this.manualClose = false;
 			useWebSocketStore.getState().updateDiagnostics({ currentUrl: url });
-			if (socket.readyState === WebSocket.OPEN) {
+			if (existingSocket.readyState === WebSocket.OPEN) {
 				this.updateState("connected");
 			}
-			return socket;
+			return existingSocket;
 		}
 
 		const previousUrl = this.url;
