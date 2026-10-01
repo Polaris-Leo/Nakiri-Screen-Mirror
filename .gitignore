@@ -2,8 +2,6 @@
 /node_modules/
 /backend/node_modules/
 /backend/dist/
-/worker/node_modules/
-/worker/.wrangler/
 
 # React Router
 /.react-router/

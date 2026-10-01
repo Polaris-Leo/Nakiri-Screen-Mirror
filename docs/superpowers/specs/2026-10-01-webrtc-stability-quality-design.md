@@ -181,5 +181,4 @@ type ScreenQuality = "balanced" | "hd" | "ultra" | "4k";
 
 - 本次不引入 TURN 服务；没有 TURN 时，严格 NAT/企业网络仍可能无法建立 P2P；
 - 本次不把视频流改为服务器转发或录制；
-- 本次不改变 Cloudflare Worker Durable Objects 的旧部署实现；
 - 本次不引入账号系统或长期设备状态存储。

@@ -11,20 +11,21 @@ describe("frontend configuration", () => {
 		expect(getSignalingBaseUrl()).toBe("wss://signal.example.com/connect");
 	});
 
-	it("falls back to the existing signaling URL", () => {
+	it("defaults to the EdgeOne-proxied Docker signaling URL", () => {
 		vi.stubEnv("VITE_SIGNALING_URL", "");
-		expect(getSignalingBaseUrl()).toBe(
-			"wss://signaling.pexni.com/connect",
-		);
+		const url = getSignalingBaseUrl();
+
+		expect(url).toBe("wss://signaling-server.unia.love/connect");
+		expect(url).not.toMatch(/workers\.dev|cloudflare|signaling\.pexni\.com/i);
 	});
 
-	it("appends the room id without duplicating query separators", () => {
-		expect(buildSignalingUrl("123456", "wss://signal.example.com/connect")).toBe(
-			"wss://signal.example.com/connect?id=123456",
-		);
+	it("appends the room id once and preserves existing query parameters", () => {
 		expect(
-			buildSignalingUrl("123456", "wss://signal.example.com/connect?tenant=prod"),
-		).toBe("wss://signal.example.com/connect?tenant=prod&id=123456");
+			buildSignalingUrl(
+				"123456",
+				"wss://signaling-server.unia.love/connect?tenant=prod&id=old",
+			),
+		).toBe("wss://signaling-server.unia.love/connect?tenant=prod&id=123456");
 	});
 
 	it("uses the newly generated room id on the first page load", () => {

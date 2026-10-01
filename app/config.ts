@@ -1,4 +1,4 @@
-const DEFAULT_SIGNALING_URL = "wss://signaling.pexni.com/connect";
+const DEFAULT_SIGNALING_URL = "wss://signaling-server.unia.love/connect";
 
 export function getSignalingBaseUrl(): string {
 	return import.meta.env.VITE_SIGNALING_URL?.trim() || DEFAULT_SIGNALING_URL;
