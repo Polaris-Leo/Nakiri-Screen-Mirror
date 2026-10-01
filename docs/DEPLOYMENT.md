@@ -45,11 +45,22 @@ VITE_SIGNALING_URL=wss://signal.example.com/connect npm run build
 将仓库上传到 ECS，在项目根目录执行：
 
 ```bash
-docker compose up -d --build
-curl http://127.0.0.1:8080/healthz
+bash scripts/deploy-docker.sh
 ```
 
-健康检查返回 `{"status":"ok"}` 即表示 Node.js 信令服务已启动。后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
+脚本会自动检查 Docker 和 Compose、构建镜像、启动服务、清理孤儿容器，并轮询健康检查。健康检查返回 `{"status":"ok"}` 即表示 Node.js 信令服务已启动。后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
+
+如果信令服务通过其他地址暴露，可以覆盖健康检查地址：
+
+```bash
+HEALTH_URL=http://127.0.0.1:18080/healthz bash scripts/deploy-docker.sh
+```
+
+脚本失败时会自动打印最近 100 行后端日志。也可以手动查看：
+
+```bash
+docker compose logs -f nakiri-signalling
+```
 
 如果服务器没有 Docker，可先按阿里云官方文档安装 Docker，再执行以上命令。
 
