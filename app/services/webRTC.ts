@@ -95,13 +95,26 @@ class WebRTCService {
 			lastError: iceConfiguration.warning ?? null,
 		});
 
+		const assertCurrentConnection = () => {
+			if (
+				requestGeneration !== this.connectionRequestGeneration ||
+				this.peerConnection !== peerConnection
+			) {
+				throw new Error("WebRTC connection request superseded");
+			}
+		};
+
 		if (this.localStream) {
 			for (const track of this.localStream.getTracks()) {
 				const sender = peerConnection.addTrack(track, this.localStream);
-				if (track.kind === "video") await this.applySenderQuality(sender);
+				if (track.kind === "video") {
+					await this.applySenderQuality(sender);
+					assertCurrentConnection();
+				}
 			}
 		}
 
+		assertCurrentConnection();
 		peerConnection.onicecandidate = (event) => {
 			if (this.peerConnection !== peerConnection || !event.candidate) return;
 			if (
@@ -193,6 +206,7 @@ class WebRTCService {
 			this.recordError("ICE 候选收集失败", event);
 		};
 
+		assertCurrentConnection();
 		this.startStatsPolling(peerConnection, this.role);
 		return peerConnection;
 	}

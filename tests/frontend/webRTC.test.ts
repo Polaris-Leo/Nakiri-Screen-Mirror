@@ -7,6 +7,7 @@ import { useWebSocketStore } from "../../app/stores/webSocket";
 
 class FakePeerConnection {
 	static instances: FakePeerConnection[] = [];
+	static nextSetParametersGate: (() => Promise<void>) | null = null;
 	constructor(readonly configuration?: RTCConfiguration) {
 		FakePeerConnection.instances.push(this);
 	}
@@ -40,6 +41,9 @@ class FakePeerConnection {
 			track,
 			getParameters: () => this.parameters,
 			setParameters: vi.fn(async (parameters: RTCRtpSendParameters) => {
+				const gate = FakePeerConnection.nextSetParametersGate;
+				FakePeerConnection.nextSetParametersGate = null;
+				await gate?.();
 				this.parameters = parameters;
 			}),
 		};
@@ -61,11 +65,13 @@ class FakeSessionDescription {
 
 describe("WebRTCService lifecycle", () => {
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
 	beforeEach(() => {
 		FakePeerConnection.instances = [];
+		FakePeerConnection.nextSetParametersGate = null;
 		(globalThis as any).RTCPeerConnection = FakePeerConnection;
 		(globalThis as any).RTCIceCandidate = FakeIceCandidate;
 		(globalThis as any).RTCSessionDescription = FakeSessionDescription;
@@ -224,6 +230,32 @@ describe("WebRTCService lifecycle", () => {
 			peerId: "123456",
 			role: "receiver",
 		});
+	});
+
+	it("does not resume setup or stop active stats polling after sender quality is superseded", async () => {
+		vi.useFakeTimers();
+		let releaseQuality!: () => void;
+		FakePeerConnection.nextSetParametersGate = () => new Promise<void>((resolve) => {
+			releaseQuality = resolve;
+		});
+		const track = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
+		webRTCService.setLocalStream({ getTracks: () => [track] } as unknown as MediaStream);
+
+		const staleConnection = webRTCService.connect("old-peer");
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+		const stalePeer = FakePeerConnection.instances[0];
+		expect(stalePeer.senders[0].setParameters).toHaveBeenCalledOnce();
+
+		const activePeer = await webRTCService.connect("new-peer") as unknown as FakePeerConnection;
+		releaseQuality();
+
+		await expect(staleConnection).rejects.toThrow("superseded");
+		await vi.advanceTimersByTimeAsync(1_000);
+
+		expect(FakePeerConnection.instances).toHaveLength(2);
+		expect(stalePeer.onicecandidate).toBeNull();
+		expect(stalePeer.getStats).not.toHaveBeenCalled();
+		expect(activePeer.getStats).toHaveBeenCalledTimes(2);
 	});
 
 	it("recreates a failed sender connection after signaling is available", async () => {
