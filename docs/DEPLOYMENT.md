@@ -150,7 +150,7 @@ docker.xuanyuan.run/library/node:20-alpine
 
 后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
 
-如果已经配置好 Nginx 或 EdgeOne 的公网域名，使用 `WSS_URL` 开启端到端 WebSocket 探针：
+如果已经配置好 Nginx 或 EdgeOne 的公网域名，部署脚本会在交互终端中询问公网 WSS 地址；输入 `wss://.../connect` 后，部署结束时会执行端到端 WebSocket 探针，直接回车则跳过。自动化/非交互环境不会等待输入，可通过 `WSS_URL` 显式启用探针：
 
 ```bash
 WSS_URL=wss://signaling-server.unia.love/connect bash scripts/deploy-docker.sh

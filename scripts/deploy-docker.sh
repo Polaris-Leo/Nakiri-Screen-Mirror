@@ -24,6 +24,10 @@ if ! docker compose version >/dev/null 2>&1; then
 	exit 1
 fi
 
+if [[ -z "$WSS_URL" && -t 0 ]]; then
+	read -r -p "请输入公网 WSS 地址（留空跳过，例如 wss://signaling-server.unia.love/connect）: " WSS_URL || WSS_URL=""
+fi
+
 printf '%s\n' "[1/4] 构建并启动 Nakiri Screen Mirror 信令服务..."
 docker compose up -d --build --remove-orphans
 
