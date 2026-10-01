@@ -12,8 +12,9 @@ describe("Docker TURN relay configuration", () => {
 		expect(compose).toMatch(/nakiri-signalling:[\s\S]*?secrets:[\s\S]*?turn_secret/);
 		expect(compose).toMatch(/coturn:[\s\S]*?secrets:[\s\S]*?turn_secret/);
 		expect(compose).toMatch(/TURN_SECRET_FILE:\s*\/run\/secrets\/turn_secret/);
-		expect(compose).toMatch(/source:\s*turn_secret[\s\S]*?target:\s*turn_secret/);
-		expect(compose).toMatch(/file:\s*\$\{TURN_SECRET_FILE\?:\?/);
+		expect(compose).toMatch(/nakiri-signalling:[\s\S]*?secrets:\s*\n\s*- turn_secret/);
+		expect(compose).toMatch(/coturn:[\s\S]*?secrets:\s*\n\s*- turn_secret/);
+		expect(compose).toMatch(/secrets:\s*\n\s*turn_secret:\s*\n\s*file:\s*\$\{TURN_SECRET_FILE:\?Set TURN_SECRET_FILE to the host secret file path\}/);
 	});
 
 	it("publishes direct TURN listeners and the bounded relay range", () => {
@@ -33,8 +34,9 @@ describe("Docker TURN relay configuration", () => {
 
 	it("renders authentication from the mounted secret into a private runtime config", () => {
 		expect(coturnEntrypoint).toContain("/run/secrets/turn_secret");
-		expect(coturnEntrypoint).toMatch(/use-auth-secret/);
-		expect(coturnEntrypoint).toMatch(/static-auth-secret/);
-		expect(coturnEntrypoint).toMatch(/chmod 600/);
+		expect(turnTemplate).toMatch(/use-auth-secret/);
+		expect(coturnEntrypoint).toMatch(/secret=\$\(cat "\$secret_file"\)/);
+		expect(coturnEntrypoint).toMatch(/printf 'static-auth-secret=%s\\n' "\$secret" >> "\$config_file"/);
+		expect(coturnEntrypoint).toMatch(/chmod 600 "\$config_file"/);
 	});
 });
