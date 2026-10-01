@@ -6,6 +6,7 @@ export interface WebRTCStats {
 	bytesSent?: number;
 	bytesReceived?: number;
 	candidateType?: string;
+	rttMs?: number;
 }
 
 export function normalizeWebRTCStats(
@@ -30,6 +31,16 @@ export function normalizeWebRTCStats(
 			stat.type === "local-candidate" &&
 			stat.id === selectedPair?.localCandidateId,
 	);
+	// Resolve the selected pair's remote candidate too, but never expose its
+	// address, port, or raw stats in the normalized diagnostics.
+	const remoteCandidate = rows.find(
+		(stat) =>
+			stat.type === "remote-candidate" &&
+			stat.id === selectedPair?.remoteCandidateId,
+	);
+	void remoteCandidate;
+	const rttSeconds = numberOrUndefined(selectedPair?.currentRoundTripTime);
+	const rttMs = rttSeconds === undefined ? undefined : numberOrUndefined(rttSeconds * 1000);
 
 	return {
 		width: numberOrUndefined(media?.frameWidth),
@@ -42,6 +53,7 @@ export function normalizeWebRTCStats(
 			typeof localCandidate?.candidateType === "string"
 				? localCandidate.candidateType
 				: undefined,
+		rttMs,
 	};
 }
 

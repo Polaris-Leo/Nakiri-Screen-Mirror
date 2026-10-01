@@ -284,7 +284,20 @@ export function ConnectionDiagnostics({
 			</p>
 			<p>屏幕采集：{peer.role === "sender" ? "共享中" : "未启动"}</p>
 			{captureError && <p>采集/连接错误：{captureError}</p>}
-			<p>候选线路：{peer.stats?.candidateType ?? unavailable}</p>
+			<p>
+				候选线路：
+				{peer.stats?.candidateType
+					? peer.stats.candidateType === "relay"
+						? "TURN 中继"
+						: "direct"
+					: unavailable}
+			</p>
+			<p>
+				RTT：
+				{typeof peer.stats?.rttMs === "number"
+					? `${Math.round(peer.stats.rttMs)} ms`
+					: unavailable}
+			</p>
 			<p>
 				画面：
 				{peer.stats?.width && peer.stats.height
