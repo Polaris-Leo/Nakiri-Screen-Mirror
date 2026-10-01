@@ -46,4 +46,15 @@ describe("connection diagnostics", () => {
 		);
 		expect(html.match(/暂无数据/g)?.length).toBeGreaterThan(0);
 	});
+
+	it("shows screen-capture setup errors to the user", () => {
+		const html = renderToStaticMarkup(
+			<ConnectionDiagnostics
+				signaling={useWebSocketStore.getState()}
+				peer={useWebRTCStore.getState()}
+				captureError="屏幕共享权限已拒绝"
+			/>,
+		);
+		expect(html).toContain("屏幕共享权限已拒绝");
+	});
 });

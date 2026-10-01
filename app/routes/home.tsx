@@ -71,6 +71,7 @@ export default function Home() {
 	const signaling = useWebSocketStore();
 	const { remoteStream, connectionState } = webrtc;
 	const [quality, setQuality] = useState<ScreenQuality>("hd");
+	const [captureError, setCaptureError] = useState<string | null>(null);
 
 	const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -92,6 +93,7 @@ export default function Home() {
 
 	const onSubmit = handleSubmit(async (data) => {
 		const { code } = data;
+		setCaptureError(null);
 		try {
 			const { stream, quality: captureQuality } = await captureDisplayMedia(quality);
 			const videoTrack = stream.getVideoTracks()[0];
@@ -102,6 +104,7 @@ export default function Home() {
 			webRTCService.setLocalStream(stream);
 			await webRTCService.connect(code);
 		} catch (error) {
+			setCaptureError(error instanceof Error ? error.message : String(error));
 			console.error("Error in WebRTC setup:", error);
 		}
 	});
@@ -109,7 +112,11 @@ export default function Home() {
 	return (
 		<VStack p={4} pt={24} h="dvh">
 			<WebSocketStateComponent />
-			<ConnectionDiagnostics signaling={signaling} peer={webrtc} />
+			<ConnectionDiagnostics
+				signaling={signaling}
+				peer={webrtc}
+				captureError={captureError}
+			/>
 			<Heading fontSize="xl">投屏码</Heading>
 			<Button
 				size="xl"
@@ -129,10 +136,11 @@ export default function Home() {
 			/>
 			<VStack hidden={connectionState !== "connected"}>
 				<Heading>已连接</Heading>
-				<Button
+					<Button
 					colorPalette="red"
 					onClick={() => {
 						webRTCService.close();
+						setCaptureError(null);
 					}}
 				>
 					断开连接
@@ -231,9 +239,11 @@ function WebSocketStateComponent() {
 export function ConnectionDiagnostics({
 	signaling,
 	peer,
+	captureError,
 }: {
 	signaling: ReturnType<typeof useWebSocketStore.getState>;
 	peer: ReturnType<typeof useWebRTCStore.getState>;
+	captureError?: string | null;
 }) {
 	const unavailable = "暂无数据";
 	const formatRate = (value?: number) =>
@@ -272,6 +282,8 @@ export function ConnectionDiagnostics({
 			<p>
 				角色/对端房间码：{peer.role ?? unavailable} / {peer.peerId ?? unavailable}
 			</p>
+			<p>屏幕采集：{peer.role === "sender" ? "共享中" : "未启动"}</p>
+			{captureError && <p>采集/连接错误：{captureError}</p>}
 			<p>候选线路：{peer.stats?.candidateType ?? unavailable}</p>
 			<p>
 				画面：
