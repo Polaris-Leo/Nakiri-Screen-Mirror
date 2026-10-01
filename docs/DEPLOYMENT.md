@@ -13,7 +13,82 @@
 - `backend/` 下的 Node.js WebSocket 服务，负责 `/connect` 信令；
 - `worker/` 下仍保留旧的 Cloudflare Worker 实现，不参与新方案部署。
 
-前端部署到 EdgeOne 静态托管，信令域名通过 EdgeOne WebSocket 回源到阿里云 ECS。两部分都需要 HTTPS，前端通过 `wss://` 连接信令服务。
+前端部署到 EdgeOne Pages，信令服务继续运行在云服务器 Docker 中；信令域名可以通过 EdgeOne WebSocket 回源到云服务器，也可以直接使用 Nginx 暴露的 HTTPS 域名。两部分都需要 HTTPS，前端通过 `wss://` 连接信令服务。
+
+## 腾讯云 EdgeOne Pages 直接部署
+
+当前仓库可以直接从 GitHub 导入 EdgeOne Pages。EdgeOne Pages 负责构建和托管 React Router 前端，仓库中的 `backend/`、`docker-compose.yml` 和 `scripts/deploy-docker.sh` 不会在 Pages 构建环境中启动，信令后端仍需部署到云服务器。
+
+### 1. 导入 GitHub 仓库
+
+在 EdgeOne Pages 控制台创建项目，连接以下仓库：
+
+```text
+https://github.com/Polaris-Leo/Nakiri-Screen-Mirror
+```
+
+推荐构建配置：
+
+```text
+框架：React Router
+Node.js：22.11.0
+安装命令：npm install
+构建命令：npm run build
+输出目录：build/client
+```
+
+本项目已启用 SPA 和预渲染模式，构建产物位于 `build/client/`。如果使用 EdgeOne CLI，也可以在项目根目录执行：
+
+```bash
+npx edgeone pages deploy
+```
+
+### 2. 设置 EdgeOne 环境变量
+
+在 EdgeOne Pages 项目的生产环境变量中设置：
+
+```text
+VITE_SIGNALING_URL=wss://signaling-server.unia.love/connect
+```
+
+如需部署预览环境，请同时在 Preview 环境配置相应的信令地址。`VITE_SIGNALING_URL` 必须在构建前设置，因为 Vite 会在构建阶段将它写入前端资源。
+
+### 3. 绑定前端域名
+
+例如将以下域名绑定到 EdgeOne Pages 项目：
+
+```text
+mirror.unia.love
+```
+
+最终通过以下地址访问前端：
+
+```text
+https://mirror.unia.love
+```
+
+### 4. 信令后端部署边界
+
+EdgeOne Pages 不会执行本项目的 Docker Compose 服务。信令服务需要在云服务器上执行：
+
+```bash
+cd ~/Nakiri-Screen-Mirror
+docker login docker.xuanyuan.run
+bash scripts/deploy-docker.sh
+```
+
+后端监听 `127.0.0.1:8080`，然后通过 Nginx 将 `signaling-server.unia.love` 反向代理到该端口，并配置 WebSocket 升级。也可以将信令域名接入 EdgeOne 网站加速，在 EdgeOne 中开启 WebSocket 并将源站指向该云服务器。
+
+浏览器最终连接的地址必须是：
+
+```text
+wss://signaling-server.unia.love/connect
+```
+
+EdgeOne 官方文档：
+
+- [EdgeOne Pages React Router 部署](https://pages.edgeone.ai/document/framework-freact-router)
+- [EdgeOne WebSocket 配置](https://cloud.tencent.com/document/product/1552/73071)
 
 ## 一、EdgeOne + 阿里云 Docker 快速部署
 
