@@ -1,5 +1,15 @@
 # Nakiri Screen Mirror 部署文档
 
+## WebRTC 连接诊断与画质说明
+
+首页的“连接诊断”会分别显示 WebSocket 信令状态和浏览器间的 WebRTC/ICE 状态。信令显示 `connected` 只说明信令通道可用；只有 WebRTC 显示 `connected` 才表示媒体链路已建立。ICE 候选线路、实际分辨率、帧率和码率来自浏览器 `getStats()`，浏览器未提供相应字段时会显示“暂无数据”。
+
+屏幕共享可选择均衡（1080p/30）、高清（1080p/60）、超清（1440p/60）和 4K（2160p/30）。这是采集目标和发送码率上限，不是保证值：浏览器、显示器、编码器、上行带宽或接收设备不支持时，实际画质会降低；不支持所选采集约束时会回退到均衡档。较高档位会增加 CPU/GPU、带宽和耗电。
+
+Node.js 信令服务、Nginx 和 EdgeOne 只承载 WebSocket 信令，不转发视频/音频流。媒体由两台浏览器通过 WebRTC 尽可能直接传输。项目当前配置 STUN、未配置 TURN，因此严格 NAT、企业防火墙或 UDP 受限网络可能导致 ICE 失败；信令可连通并不代表 P2P 媒体一定可达。出现此类问题时，先查看诊断面板的 ICE 状态和候选线路，并跨不同网络验证；必要时另行部署 TURN 中继（此时媒体会经过 TURN）。
+
+重连过程中信令状态会显示为 `reconnecting`，并显示已重试次数和最近错误。部署端的 `/healthz` 仍只是 HTTP 存活检查；要确认 WSS 握手和信令转发，请按下方 `WSS_URL=... bash scripts/deploy-docker.sh` 探测说明执行。
+
 项目现在支持两种后端部署方式：
 
 1. 推荐的新方案：腾讯云 EdgeOne 托管前端，阿里云 ECS Docker 运行 Node.js WebSocket 后端；
