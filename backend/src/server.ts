@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { pathToFileURL } from "node:url";
+import { isIP } from "node:net";
+import { domainToASCII, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { isConnectionId } from "./protocol.js";
@@ -19,10 +20,27 @@ interface RateLimitBucket {
 }
 
 function isValidTurnUrl(url: string): boolean {
-	const match = /^turns?:([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\[[0-9a-f:.]+\])(?::(\d{1,5}))?(?:\?transport=(?:udp|tcp))?$/i.exec(url);
+	const match = /^turns?:((?:\[[^\]]+\])|[^:\[\]/?#]+)(?::(\d+))?(?:\?transport=(?:udp|tcp))?$/i.exec(url);
 	if (!match) return false;
-	const port = match[2] ? Number(match[2]) : undefined;
-	return port === undefined || (port >= 1 && port <= 65535);
+
+	const [, rawHost, rawPort] = match;
+	if (rawPort !== undefined) {
+		const port = Number(rawPort);
+		if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
+	}
+
+	if (rawHost.startsWith("[")) {
+		return rawHost.endsWith("]") && isIP(rawHost.slice(1, -1)) === 6;
+	}
+	if (isIP(rawHost) === 4) return true;
+
+	const hostname = domainToASCII(rawHost);
+	if (hostname.length === 0 || hostname.length > 253) return false;
+	return hostname.split(".").every((label) =>
+		label.length > 0 &&
+		label.length <= 63 &&
+		/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label),
+	);
 }
 
 function clientAddress(request: IncomingMessage, trustProxy: boolean): string {

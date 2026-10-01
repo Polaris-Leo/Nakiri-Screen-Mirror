@@ -66,6 +66,16 @@ describe("GET /api/turn-credentials", () => {
 		expect(await response.text()).not.toContain(validConfig.turnSecret);
 	});
 
+	it.each(["turn:foo..bar", "turn:.foo", "turn:foo."])(
+		"returns 503 for TURN hosts with empty DNS labels (%s)",
+		async (turnUrl) => {
+			const baseUrl = await startServer({ ...validConfig, turnUrls: [turnUrl] });
+			const response = await fetch(`${baseUrl}/api/turn-credentials`);
+			expect(response.status).toBe(503);
+			expect(await response.text()).not.toContain(validConfig.turnSecret);
+		},
+	);
+
 	it("rejects non-GET methods", async () => {
 		const baseUrl = await startServer(validConfig);
 		const response = await fetch(`${baseUrl}/api/turn-credentials`, { method: "POST" });
