@@ -11,6 +11,7 @@ export type { WebRTCStats } from "~/services/webRTCStats";
 
 const STATS_INTERVAL_MS = 1_000;
 const DISCONNECTED_GRACE_MS = 5_000;
+const ICE_RESTART_ANSWER_TIMEOUT_MS = 10_000;
 
 class WebRTCService {
 	private static instance: WebRTCService;
@@ -24,6 +25,8 @@ class WebRTCService {
 	private disconnectedTimeout: number | null = null;
 	private reconnectRequested = false;
 	private recovering = false;
+	private recoveryAttemptPeer: RTCPeerConnection | null = null;
+	private iceRestartAnswerTimeout: number | null = null;
 	private lastByteSample: { bytes: number; at: number } | null = null;
 	private connectionRequestGeneration = 0;
 
@@ -167,6 +170,7 @@ class WebRTCService {
 			});
 			if (state === "connected") {
 				this.clearDisconnectedTimeout();
+				this.clearIceRestartRecovery(peerConnection);
 				this.reconnectRequested = false;
 			} else if (state === "failed") {
 				this.requestSenderRecovery();
@@ -259,9 +263,13 @@ class WebRTCService {
 	}
 
 	private async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
-		if (!this.peerConnection) return;
+		const peerConnection = this.peerConnection;
+		if (!peerConnection) return;
+		const requestGeneration = this.connectionRequestGeneration;
 		try {
-			await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+			await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+			if (this.peerConnection !== peerConnection || requestGeneration !== this.connectionRequestGeneration) return;
+			if (answer.type === "answer") this.clearIceRestartRecovery(peerConnection);
 			await this.flushPendingCandidates();
 		} catch (error) {
 			this.recordError("应用 WebRTC answer 失败", error);
@@ -290,31 +298,86 @@ class WebRTCService {
 
 	private requestSenderRecovery() {
 		if (this.role !== "sender" || !this.localStream || !this.peerId) return;
+		if (this.recoveryAttemptPeer === this.peerConnection) return;
 		this.reconnectRequested = true;
 		void this.recoverSenderConnection();
 	}
 
+	private async restartIceAndRenegotiate(peerConnection: RTCPeerConnection): Promise<boolean> {
+		const requestGeneration = this.connectionRequestGeneration;
+		const isCurrent = () => this.peerConnection === peerConnection &&
+			requestGeneration === this.connectionRequestGeneration;
+		if (!isCurrent()) return false;
+		if (peerConnection.signalingState !== "stable" ||
+			useWebSocketStore.getState().webSocketState !== "connected") {
+			useWebRTCStore.getState().setDiagnostics({ lastError: "ICE 重启暂不可用，将重建 WebRTC 连接" });
+			return false;
+		}
+		try {
+			const offer = await peerConnection.createOffer({ iceRestart: true });
+			if (!isCurrent()) return false;
+			await peerConnection.setLocalDescription(offer);
+			if (!isCurrent()) return false;
+			if (useWebSocketStore.getState().webSocketState !== "connected" ||
+				!webSocketService.sendMessage({ type: "offer", to: this.peerId, data: offer })) {
+				useWebRTCStore.getState().setDiagnostics({ lastError: "ICE 重启 offer 未发送，将重建 WebRTC 连接" });
+				return false;
+			}
+			return true;
+		} catch {
+			useWebRTCStore.getState().setDiagnostics({ lastError: "ICE 重启协商失败，将重建 WebRTC 连接" });
+			return false;
+		}
+	}
+
 	private async recoverSenderConnection() {
 		if (
-			!this.reconnectRequested ||
-			this.recovering ||
+			!this.reconnectRequested || this.recovering || this.recoveryAttemptPeer ||
 			useWebSocketStore.getState().webSocketState !== "connected" ||
-			!this.localStream ||
-			!this.peerId
+			this.role !== "sender" || !this.localStream || !this.peerId || !this.peerConnection
 		) return;
 
 		this.recovering = true;
+		const peerConnection = this.peerConnection;
+		const requestGeneration = this.connectionRequestGeneration;
 		const peerId = this.peerId;
 		this.reconnectRequested = false;
-		this.closePeerConnection();
+		this.recoveryAttemptPeer = peerConnection;
 		try {
-			await this.connect(peerId);
-		} catch (error) {
-			this.reconnectRequested = true;
-			this.recordError("重建 WebRTC 连接失败", error);
+			if (await this.restartIceAndRenegotiate(peerConnection)) {
+				if (this.peerConnection === peerConnection && requestGeneration === this.connectionRequestGeneration) {
+					this.iceRestartAnswerTimeout = window.setTimeout(() => {
+						if (this.peerConnection !== peerConnection || requestGeneration !== this.connectionRequestGeneration) return;
+						this.clearIceRestartRecovery(peerConnection);
+						this.rebuildSenderConnection(peerConnection, requestGeneration, peerId);
+					}, ICE_RESTART_ANSWER_TIMEOUT_MS);
+				}
+				return;
+			}
+			this.rebuildSenderConnection(peerConnection, requestGeneration, peerId);
 		} finally {
 			this.recovering = false;
 		}
+	}
+
+	private rebuildSenderConnection(peerConnection: RTCPeerConnection, requestGeneration: number, peerId: string) {
+		if (this.peerConnection !== peerConnection || requestGeneration !== this.connectionRequestGeneration || this.role !== "sender") return;
+		this.clearIceRestartRecovery(peerConnection);
+		this.closePeerConnection();
+		void this.connect(peerId).catch((error) => {
+			if (requestGeneration + 1 !== this.connectionRequestGeneration) return;
+			this.reconnectRequested = true;
+			this.recordError("重建 WebRTC 连接失败", error);
+		});
+	}
+
+	private clearIceRestartRecovery(peerConnection?: RTCPeerConnection) {
+		if (peerConnection && this.recoveryAttemptPeer !== peerConnection) return;
+		if (this.iceRestartAnswerTimeout !== null) {
+			clearTimeout(this.iceRestartAnswerTimeout);
+			this.iceRestartAnswerTimeout = null;
+		}
+		this.recoveryAttemptPeer = null;
 	}
 
 	private startStatsPolling(peerConnection: RTCPeerConnection, role: WebRTCRole) {
@@ -367,6 +430,7 @@ class WebRTCService {
 	private closePeerConnection() {
 		this.stopStatsPolling();
 		this.clearDisconnectedTimeout();
+		this.clearIceRestartRecovery();
 		const peerConnection = this.peerConnection;
 		this.peerConnection = null;
 		peerConnection?.close();
