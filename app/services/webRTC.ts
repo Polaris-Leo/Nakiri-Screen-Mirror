@@ -261,7 +261,11 @@ class WebRTCService {
 			await this.flushPendingCandidates();
 			const answer = await peerConnection.createAnswer();
 			await peerConnection.setLocalDescription(answer);
-			webSocketService.sendMessage({ type: "answer", to: peerId, data: answer });
+			if (!webSocketService.sendMessage({ type: "answer", to: peerId, data: answer })) {
+				useWebRTCStore.getState().setDiagnostics({
+					lastError: "信令连接暂不可用，协商应答未发送",
+				});
+			}
 		} catch (error) {
 			this.recordError("处理 WebRTC offer 失败", error);
 		}
