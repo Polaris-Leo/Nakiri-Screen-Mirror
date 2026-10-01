@@ -7,7 +7,7 @@ import {
 	Text,
 	Spacer,
 } from "@chakra-ui/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { customAlphabet } from "nanoid/non-secure";
 import { TriangleAlertIcon } from "lucide-react";
 import { z } from "zod";
@@ -22,6 +22,12 @@ import { PinInput } from "~/components/ui/pin-input";
 import { webRTCService } from "~/services/webRTC";
 import { useWebRTCStore } from "~/stores/webRTC";
 import { buildSignalingUrl, resolveRoomId } from "~/config";
+import {
+	SCREEN_QUALITY_PRESETS,
+	applyVideoTrackQuality,
+	captureDisplayMedia,
+	type ScreenQuality,
+} from "~/media";
 
 export async function clientLoader() {
 	const { id, setId } = useAuthStore.getState();
@@ -62,6 +68,7 @@ const schema = z.object({
 export default function Home() {
 	const { id } = useAuthStore();
 	const { remoteStream, connectionState } = useWebRTCStore();
+	const [quality, setQuality] = useState<ScreenQuality>("hd");
 
 	const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -84,10 +91,9 @@ export default function Home() {
 	const onSubmit = handleSubmit(async (data) => {
 		const { code } = data;
 		try {
-			const stream = await navigator.mediaDevices.getDisplayMedia({
-				video: true,
-				audio: true,
-			});
+			const { stream, quality: captureQuality } = await captureDisplayMedia(quality);
+			const videoTrack = stream.getVideoTracks()[0];
+			if (videoTrack) await applyVideoTrackQuality(videoTrack, captureQuality);
 			webRTCService.setLocalStream(stream);
 			const pc = await webRTCService.connect(code);
 			stream.getTracks().forEach((track) => {
@@ -151,6 +157,20 @@ export default function Home() {
 							{...register("code")}
 						/>
 					</Field>
+					<label>
+						<Text mb={2}>画面质量</Text>
+						<select
+							aria-label="画面质量"
+							value={quality}
+							onChange={(event) => setQuality(event.target.value as ScreenQuality)}
+						>
+							{Object.entries(SCREEN_QUALITY_PRESETS).map(([value, preset]) => (
+								<option key={value} value={value}>
+									{preset.label}
+								</option>
+							))}
+						</select>
+					</label>
 					<Button w="full" type="submit">
 						提交
 					</Button>
