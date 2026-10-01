@@ -1,0 +1,12 @@
+services:
+  nakiri-signalling:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nakiri-screen-mirror-signaling
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      HOST: "0.0.0.0"

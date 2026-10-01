@@ -1,17 +1,82 @@
 # Nakiri Screen Mirror 部署文档
 
-项目由两部分组成：
+项目现在支持两种后端部署方式：
+
+1. 推荐的新方案：腾讯云 EdgeOne 托管前端，阿里云 ECS Docker 运行 Node.js WebSocket 后端；
+2. 兼容旧方案：Cloudflare Workers + Durable Objects。
+
+本文重点说明 EdgeOne + 阿里云 Docker 方案。
+
+新方案由两部分组成：
 
 - 根目录的 React Router 前端，构建后是静态文件；
-- `worker/` 下的 Cloudflare Worker，负责 `/connect` WebSocket 信令和 Durable Object 房间。
+- `backend/` 下的 Node.js WebSocket 服务，负责 `/connect` 信令；
+- `worker/` 下仍保留旧的 Cloudflare Worker 实现，不参与新方案部署。
 
-前端可以部署在 Linux/Nginx、Cloudflare Pages 或其他静态托管服务；信令服务必须部署到 Cloudflare Workers。两部分都需要 HTTPS，前端通过 `wss://` 连接 Worker。
+前端部署到 EdgeOne 静态托管，信令域名通过 EdgeOne WebSocket 回源到阿里云 ECS。两部分都需要 HTTPS，前端通过 `wss://` 连接信令服务。
 
-## 一、准备工作
+## 一、EdgeOne + 阿里云 Docker 快速部署
+
+### 1. 构建前端
+
+在项目根目录执行：
+
+PowerShell：
+
+```powershell
+$env:VITE_SIGNALING_URL = "wss://signal.example.com/connect"
+npm install
+npm run typecheck
+npm run build
+```
+
+Linux/macOS：
+
+```bash
+VITE_SIGNALING_URL=wss://signal.example.com/connect npm install
+VITE_SIGNALING_URL=wss://signal.example.com/connect npm run typecheck
+VITE_SIGNALING_URL=wss://signal.example.com/connect npm run build
+```
+
+将 `build/client/` 上传到 EdgeOne 静态站点。EdgeOne 需要将未知路径回退到 `/index.html`，并开启 HTTPS。
+
+### 2. 部署阿里云 Docker 后端
+
+将仓库上传到 ECS，在项目根目录执行：
+
+```bash
+docker compose up -d --build
+curl http://127.0.0.1:8080/healthz
+```
+
+健康检查返回 `{"status":"ok"}` 即表示 Node.js 信令服务已启动。后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
+
+如果服务器没有 Docker，可先按阿里云官方文档安装 Docker，再执行以上命令。
+
+### 3. 配置 EdgeOne 信令回源
+
+为 `signal.example.com` 配置 EdgeOne 站点或代理规则：
+
+- 源站填写阿里云 ECS 公网 IP 或负载均衡地址；
+- 源站端口映射到 Docker 的 `8080`；
+- 开启 WebSocket；
+- 配置 HTTPS 证书；
+- 将 `/connect` 的 WebSocket 请求转发到后端；
+- 将 `/healthz` 用作健康检查。
+
+前端域名例如 `mirror.example.com`，信令域名例如 `signal.example.com`。不要把 `VITE_SIGNALING_URL` 设置成 `http://` 或 `ws://`，生产环境使用 `wss://`。
+
+### 4. 多实例说明
+
+当前 `backend/` 使用单实例内存保存 WebSocket 连接。单台 ECS 可以直接运行；如果部署多台 ECS 或多个容器，需要增加 Redis Pub/Sub 或改用阿里云负载均衡的会话保持，否则发送方和接收方落到不同实例时无法互相找到连接。
+
+WebRTC 视频本身仍然由浏览器端 P2P 传输，Docker 后端主要承载信令消息。
+
+## 二、准备工作
 
 需要准备 Cloudflare 账号、已接入 Cloudflare 的域名、Node.js 20+，以及前端域名（如 `mirror.example.com`）和 Worker 信令域名（如 `signal.example.com`）。
 
-## 二、部署 Cloudflare Worker
+## 三、部署 Cloudflare Worker（旧方案）
 
 在本地或服务器执行：
 
@@ -53,7 +118,7 @@ custom_domain = true
 
 然后重新执行 `npm run deploy`。也可以在 Cloudflare 控制台的 **Workers & Pages → nakiri-screen-mirror-signaling → Settings → Domains & Routes** 中添加 Custom Domain。
 
-## 三、构建前端
+## 四、构建前端（通用说明）
 
 信令地址通过 `VITE_SIGNALING_URL` 配置。
 
