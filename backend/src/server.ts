@@ -8,8 +8,17 @@ const host = process.env.HOST ?? "0.0.0.0";
 const hub = new SignallingHub();
 const httpServer = createServer((request, response) => {
 	if (request.url === "/healthz") {
-		response.writeHead(200, { "content-type": "application/json" });
-		response.end(JSON.stringify({ status: "ok" }));
+		response.writeHead(200, {
+			"cache-control": "no-store",
+			"content-type": "application/json",
+		});
+		response.end(
+			JSON.stringify({
+				status: "ok",
+				service: "nakiri-signalling",
+				websocket: { path: "/connect", protocol: "websocket" },
+			}),
+		);
 		return;
 	}
 	response.writeHead(404);

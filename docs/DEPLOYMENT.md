@@ -132,7 +132,21 @@ docker.xuanyuan.run/library/node:20-alpine
 
 由于该镜像仓库要求登录，首次部署或凭据失效后需要重新执行 `docker login docker.xuanyuan.run`。仅在 `/etc/docker/daemon.json` 中配置 `registry-mirrors` 不会自动替代 Dockerfile 中的镜像地址。
 
-脚本会自动检查 Docker 和 Compose、构建镜像、启动服务、清理孤儿容器，并轮询健康检查。健康检查返回 `{"status":"ok"}` 即表示 Node.js 信令服务已启动。后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
+脚本会自动检查 Docker 和 Compose、构建镜像、启动服务、清理孤儿容器，并轮询健康检查。`/healthz` 只表示 HTTP 服务已启动，不代表公网 WSS 链路可用。当前健康响应还会标识 WebSocket 路径：
+
+```json
+{"status":"ok","service":"nakiri-signalling","websocket":{"path":"/connect","protocol":"websocket"}}
+```
+
+后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
+
+如果已经配置好 Nginx 或 EdgeOne 的公网域名，使用 `WSS_URL` 开启端到端 WebSocket 探针：
+
+```bash
+WSS_URL=wss://signaling-server.unia.love/connect bash scripts/deploy-docker.sh
+```
+
+该探针会在容器内创建两个临时 WebSocket 连接，验证 TLS、HTTP 101 升级、`/connect` 路径、6 位连接码和一条信令消息转发。探针通过后才会输出最终部署成功；未设置 `WSS_URL` 时只执行本机 HTTP 健康检查。
 
 如果信令服务通过其他地址暴露，可以覆盖健康检查地址：
 
@@ -146,7 +160,7 @@ HEALTH_URL=http://127.0.0.1:18080/healthz bash scripts/deploy-docker.sh
 docker compose logs -f nakiri-signalling
 ```
 
-如果服务器没有 Docker，可先按阿里云官方文档安装 Docker，再执行以上命令。
+如果服务器没有 Docker，可先按云厂商官方文档安装 Docker，再执行以上命令。
 
 ### 3. 配置 EdgeOne 信令回源
 

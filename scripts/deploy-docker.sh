@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/healthz}"
+WSS_URL="${WSS_URL:-}"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-30}"
 
 cd "$PROJECT_ROOT"
@@ -23,10 +24,10 @@ if ! docker compose version >/dev/null 2>&1; then
 	exit 1
 fi
 
-printf '%s\n' "[1/3] 构建并启动 Nakiri Screen Mirror 信令服务..."
+printf '%s\n' "[1/4] 构建并启动 Nakiri Screen Mirror 信令服务..."
 docker compose up -d --build --remove-orphans
 
-printf '%s\n' "[2/3] 等待健康检查：$HEALTH_URL"
+printf '%s\n' "[2/4] 等待健康检查：$HEALTH_URL"
 for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
 	if command -v curl >/dev/null 2>&1 && curl --fail --silent --show-error "$HEALTH_URL" >/dev/null; then
 		break
@@ -39,5 +40,12 @@ for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
 	sleep 2
 done
 
-printf '%s\n' "[3/3] 部署成功，当前容器状态："
+if [[ -n "$WSS_URL" ]]; then
+	printf '%s\n' "[3/4] 检查真实的 WebSocket 信令链路：$WSS_URL"
+	docker compose exec -T nakiri-signalling node dist/probe.js "$WSS_URL"
+else
+	printf '%s\n' "[3/4] 未设置 WSS_URL，跳过外部 WebSocket 最终检查。" >&2
+fi
+
+printf '%s\n' "[4/4] 部署成功，当前容器状态："
 docker compose ps
