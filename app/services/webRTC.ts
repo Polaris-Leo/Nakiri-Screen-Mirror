@@ -1,4 +1,6 @@
+import { getSignalingBaseUrl } from "~/config";
 import { SCREEN_QUALITY_PRESETS, type ScreenQuality } from "~/media";
+import { fetchIceConfiguration } from "~/services/iceConfiguration";
 import { useWebRTCStore, type WebRTCRole } from "~/stores/webRTC";
 import { useWebSocketStore } from "~/stores/webSocket";
 import { webSocketService } from "~/services/webSocket";
@@ -23,12 +25,7 @@ class WebRTCService {
 	private reconnectRequested = false;
 	private recovering = false;
 	private lastByteSample: { bytes: number; at: number } | null = null;
-	private readonly config: RTCConfiguration = {
-		iceServers: [
-			{ urls: "stun:stun.l.google.com:19302" },
-			{ urls: "stun:stun1.l.google.com:19302" },
-		],
-	};
+	private connectionRequestGeneration = 0;
 
 	private constructor() {
 		webSocketService.registerHandler("ice_candidate", (message) => {
@@ -78,10 +75,15 @@ class WebRTCService {
 			return this.peerConnection;
 		}
 
+		const requestGeneration = ++this.connectionRequestGeneration;
 		if (this.peerConnection) this.closePeerConnection();
 		this.peerId = to;
 		this.role = this.localStream ? "sender" : "receiver";
-		const peerConnection = new RTCPeerConnection(this.config);
+		const iceConfiguration = await fetchIceConfiguration(getSignalingBaseUrl());
+		if (requestGeneration !== this.connectionRequestGeneration) {
+			throw new Error("WebRTC connection request superseded");
+		}
+		const peerConnection = new RTCPeerConnection({ iceServers: iceConfiguration.iceServers });
 		this.peerConnection = peerConnection;
 		useWebRTCStore.getState().setDiagnostics({
 			role: this.role,
@@ -90,7 +92,7 @@ class WebRTCService {
 			iceConnectionState: peerConnection.iceConnectionState,
 			iceGatheringState: peerConnection.iceGatheringState,
 			signalingState: peerConnection.signalingState,
-			lastError: null,
+			lastError: iceConfiguration.warning ?? null,
 		});
 
 		if (this.localStream) {
@@ -365,6 +367,7 @@ class WebRTCService {
 	}
 
 	close() {
+		this.connectionRequestGeneration += 1;
 		this.reconnectRequested = false;
 		this.recovering = false;
 		this.localStream?.getTracks().forEach((track) => track.stop());

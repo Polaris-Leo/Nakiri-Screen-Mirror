@@ -7,6 +7,9 @@ import { useWebSocketStore } from "../../app/stores/webSocket";
 
 class FakePeerConnection {
 	static instances: FakePeerConnection[] = [];
+	constructor(readonly configuration?: RTCConfiguration) {
+		FakePeerConnection.instances.push(this);
+	}
 	connectionState: RTCPeerConnectionState = "new";
 	remoteDescription: RTCSessionDescriptionInit | null = null;
 	iceConnectionState: RTCIceConnectionState = "new";
@@ -46,9 +49,6 @@ class FakePeerConnection {
 	getSenders = vi.fn(() => this.senders as unknown as RTCRtpSender[]);
 	getStats = vi.fn(async () => new Map() as unknown as RTCStatsReport);
 
-	constructor() {
-		FakePeerConnection.instances.push(this);
-	}
 }
 
 class FakeIceCandidate {
@@ -70,9 +70,84 @@ describe("WebRTCService lifecycle", () => {
 		(globalThis as any).RTCIceCandidate = FakeIceCandidate;
 		(globalThis as any).RTCSessionDescription = FakeSessionDescription;
 		(globalThis as any).window = globalThis;
+		vi.stubGlobal("fetch", vi.fn(async () => ({
+			ok: true,
+			json: async () => ({
+				iceServers: [{ urls: "turn:turn.example.com:3478", username: "user", credential: "pass" }],
+			}),
+		} as Response)));
 		webRTCService.close();
 		useWebSocketStore.setState({ webSocketState: "disconnected" });
 		useWebRTCStore.getState().reset();
+	});
+
+	it("loads TURN credentials before creating an explicit sender connection", async () => {
+		const track = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
+		webRTCService.setLocalStream({ getTracks: () => [track] } as unknown as MediaStream);
+
+		await webRTCService.connect("sender-peer");
+
+		expect(FakePeerConnection.instances[0].configuration?.iceServers).toContainEqual({
+			urls: "turn:turn.example.com:3478",
+			username: "user",
+			credential: "pass",
+		});
+	});
+
+	it("loads TURN credentials before creating an incoming receiver connection", async () => {
+		await webRTCService.handleOffer("receiver-peer", { type: "offer", sdp: "offer" });
+
+		expect(FakePeerConnection.instances[0].configuration?.iceServers).toContainEqual({
+			urls: "turn:turn.example.com:3478",
+			username: "user",
+			credential: "pass",
+		});
+	});
+
+	it("allows STUN-only connection and records a warning when credential fetch fails", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, json: async () => ({}) } as Response)));
+
+		await webRTCService.connect("fallback-peer");
+
+		expect(FakePeerConnection.instances[0].configuration?.iceServers).toEqual([
+			{ urls: "stun:stun.l.google.com:19302" },
+			{ urls: "stun:stun1.l.google.com:19302" },
+		]);
+		expect(useWebRTCStore.getState().lastError).toBeTruthy();
+	});
+
+	it("does not install a peer connection from a stale ICE fetch", async () => {
+		let resolveFirst!: (response: Response) => void;
+		const firstFetch = new Promise<Response>((resolve) => { resolveFirst = resolve; });
+		const fetcher = vi.fn()
+			.mockReturnValueOnce(firstFetch)
+			.mockResolvedValueOnce({ ok: true, json: async () => ({ iceServers: [{ urls: "turn:fresh.example", username: "u", credential: "c" }] }) } as Response);
+		vi.stubGlobal("fetch", fetcher);
+		const staleConnection = webRTCService.connect("old-peer");
+		const activeConnection = await webRTCService.connect("new-peer");
+		resolveFirst({ ok: true, json: async () => ({ iceServers: [{ urls: "turn:stale.example", username: "u", credential: "c" }] }) } as Response);
+
+		await expect(staleConnection).rejects.toThrow("superseded");
+		expect(FakePeerConnection.instances).toHaveLength(1);
+		expect(FakePeerConnection.instances[0]).toBe(activeConnection);
+		expect(FakePeerConnection.instances[0].configuration?.iceServers).not.toContainEqual(
+			expect.objectContaining({ urls: "turn:stale.example" }),
+		);
+	});
+
+	it("clears a previous warning when valid TURN credentials load", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, json: async () => ({}) } as Response)));
+		await webRTCService.connect("first-peer");
+		expect(useWebRTCStore.getState().lastError).toBeTruthy();
+		webRTCService.close();
+		vi.stubGlobal("fetch", vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ iceServers: [{ urls: "turn:turn.example.com", username: "u", credential: "c" }] }),
+		} as Response)));
+
+		await webRTCService.connect("second-peer");
+
+		expect(useWebRTCStore.getState().lastError).toBeNull();
 	});
 
 	it("queues ICE candidates until the remote description exists", async () => {
