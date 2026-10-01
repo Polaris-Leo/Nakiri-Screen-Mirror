@@ -67,7 +67,8 @@ const schema = z.object({
 
 export default function Home() {
 	const { id } = useAuthStore();
-	const { remoteStream, connectionState } = useWebRTCStore();
+	const webrtc = useWebRTCStore();
+	const { remoteStream, connectionState } = webrtc;
 	const [quality, setQuality] = useState<ScreenQuality>("hd");
 
 	const videoRef = useRef<HTMLVideoElement>(null);
@@ -93,12 +94,12 @@ export default function Home() {
 		try {
 			const { stream, quality: captureQuality } = await captureDisplayMedia(quality);
 			const videoTrack = stream.getVideoTracks()[0];
-			if (videoTrack) await applyVideoTrackQuality(videoTrack, captureQuality);
+			const appliedQuality = videoTrack
+				? await applyVideoTrackQuality(videoTrack, captureQuality)
+				: captureQuality;
+			await webRTCService.setQuality(appliedQuality);
 			webRTCService.setLocalStream(stream);
-			const pc = await webRTCService.connect(code);
-			stream.getTracks().forEach((track) => {
-				pc.addTrack(track, stream);
-			});
+			await webRTCService.connect(code);
 		} catch (error) {
 			console.error("Error in WebRTC setup:", error);
 		}
@@ -107,6 +108,7 @@ export default function Home() {
 	return (
 		<VStack p={4} pt={24} h="dvh">
 			<WebSocketStateComponent />
+			<ConnectionDiagnostics signaling={useWebSocketStore()} peer={webrtc} />
 			<Heading fontSize="xl">投屏码</Heading>
 			<Button
 				size="xl"
@@ -222,5 +224,64 @@ function WebSocketStateComponent() {
 				</HStack>
 			</Alert>
 		</HStack>
+	);
+}
+
+export function ConnectionDiagnostics({
+	signaling,
+	peer,
+}: {
+	signaling: ReturnType<typeof useWebSocketStore.getState>;
+	peer: ReturnType<typeof useWebRTCStore.getState>;
+}) {
+	const unavailable = "暂无数据";
+	const formatRate = (value?: number) =>
+		typeof value === "number" ? `${Math.round(value)} fps` : unavailable;
+	const formatBitrate = (value?: number) =>
+		typeof value === "number"
+			? `${(value / 1_000_000).toFixed(2)} Mbps`
+			: unavailable;
+	return (
+		<section
+			aria-label="连接诊断"
+			style={{
+				width: "100%",
+				maxWidth: "36rem",
+				padding: "0.75rem",
+				border: "1px solid",
+				borderRadius: "0.5rem",
+				fontSize: "0.875rem",
+			}}
+		>
+			<p>
+				<strong>连接诊断</strong>
+			</p>
+			<p>
+				信令：{signaling.webSocketState}（重连 {signaling.reconnectAttempts} 次）
+			</p>
+			{signaling.lastError && <p>信令错误：{signaling.lastError}</p>}
+			<p>
+				WebRTC：{peer.connectionState ?? unavailable}；ICE：
+				{peer.iceConnectionState ?? unavailable}
+			</p>
+			<p>
+				ICE 收集：{peer.iceGatheringState ?? unavailable}；协商：
+				{peer.signalingState ?? unavailable}
+			</p>
+			<p>
+				角色/设备：{peer.role ?? unavailable} / {peer.peerId ?? unavailable}
+			</p>
+			<p>候选线路：{peer.stats?.candidateType ?? unavailable}</p>
+			<p>
+				画面：
+				{peer.stats?.width && peer.stats.height
+					? `${peer.stats.width}×${peer.stats.height}`
+					: unavailable}
+				；帧率：{formatRate(peer.stats?.framesPerSecond)}；码率：
+				{formatBitrate(peer.stats?.bitrate)}
+			</p>
+			{peer.lastError && <p>WebRTC 错误：{peer.lastError}</p>}
+			<p>视频流不经过信令服务器</p>
+		</section>
 	);
 }
