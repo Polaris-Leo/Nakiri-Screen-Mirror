@@ -92,6 +92,22 @@ describe("WebSocketService lifecycle", () => {
 		expect(socket.send).toHaveBeenCalledTimes(1);
 	});
 
+	it("keeps the existing socket message handler when connect repeats the same URL", () => {
+		const handler = vi.fn();
+		webSocketService.registerHandler("offer", handler);
+		const url = "wss://example.test/connect?id=123456";
+		webSocketService.connect(url);
+		const firstSocket = FakeWebSocket.instances[0];
+		firstSocket.open();
+
+		const secondSocket = webSocketService.connect(url);
+		firstSocket.onmessage?.({ data: JSON.stringify({ type: "offer" }) } as MessageEvent);
+
+		expect(secondSocket).toBe(firstSocket);
+		expect(FakeWebSocket.instances).toHaveLength(1);
+		expect(handler).toHaveBeenCalledTimes(1);
+	});
+
 	it("enters reconnecting state and retries beyond five failures", () => {
 		webSocketService.connect("wss://example.test/connect?id=123456");
 

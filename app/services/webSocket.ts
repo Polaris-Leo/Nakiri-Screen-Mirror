@@ -89,6 +89,13 @@ class WebSocketService {
 	}
 
 	connect(url: string) {
+		if (this.ws?.readyState === WebSocket.OPEN && this.url === url) {
+			this.manualClose = false;
+			useWebSocketStore.getState().updateDiagnostics({ currentUrl: url });
+			this.updateState("connected");
+			return this.ws;
+		}
+
 		const previousUrl = this.url;
 		this.url = url;
 		this.manualClose = false;
@@ -101,10 +108,6 @@ class WebSocketService {
 		}
 		useWebSocketStore.getState().updateDiagnostics({ currentUrl: url });
 
-		if (this.ws?.readyState === WebSocket.OPEN && previousUrl === url) {
-			this.updateState("connected");
-			return this.ws;
-		}
 		this.stopHeartbeat();
 		this.ws?.close();
 
