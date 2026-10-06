@@ -2,12 +2,14 @@
 /node_modules/
 /backend/node_modules/
 /backend/dist/
-/worker/node_modules/
-/worker/.wrangler/
 
 # React Router
 /.react-router/
 /build/
+
+# Local deployment environment and file-backed secrets
+/.env
+/secrets/
 
 # Local isolated worktrees
 /.worktrees/

@@ -6,6 +6,7 @@ export interface WebRTCStats {
 	bytesSent?: number;
 	bytesReceived?: number;
 	candidateType?: string;
+	rttMs?: number;
 }
 
 export function normalizeWebRTCStats(
@@ -30,6 +31,17 @@ export function normalizeWebRTCStats(
 			stat.type === "local-candidate" &&
 			stat.id === selectedPair?.localCandidateId,
 	);
+	// Resolve the selected pair's remote candidate too, but never expose its
+	// address, port, or raw stats in the normalized diagnostics.
+	const remoteCandidate = rows.find(
+		(stat) =>
+			stat.type === "remote-candidate" &&
+			stat.id === selectedPair?.remoteCandidateId,
+	);
+	// RTT is a selected-pair metric and remains useful even if the remote row
+	// is missing; path classification requires resolving both candidate rows.
+	const rttSeconds = numberOrUndefined(selectedPair?.currentRoundTripTime);
+	const rttMs = rttSeconds === undefined ? undefined : numberOrUndefined(rttSeconds * 1000);
 
 	return {
 		width: numberOrUndefined(media?.frameWidth),
@@ -38,11 +50,17 @@ export function normalizeWebRTCStats(
 		bitrate: numberOrUndefined(media?.bitrate ?? media?.targetBitrate),
 		bytesSent: numberOrUndefined(media?.bytesSent),
 		bytesReceived: numberOrUndefined(media?.bytesReceived),
-		candidateType:
-			typeof localCandidate?.candidateType === "string"
-				? localCandidate.candidateType
-				: undefined,
+		candidateType: selectedPairPathType(localCandidate?.candidateType, remoteCandidate?.candidateType),
+		rttMs,
 	};
+}
+
+function selectedPairPathType(localType: unknown, remoteType: unknown): string | undefined {
+	const directTypes = new Set(["host", "srflx", "prflx"]);
+	if (localType === "relay" || remoteType === "relay") return "relay";
+	if (typeof localType !== "string" || typeof remoteType !== "string") return undefined;
+	if (!directTypes.has(localType) || !directTypes.has(remoteType)) return undefined;
+	return localType;
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

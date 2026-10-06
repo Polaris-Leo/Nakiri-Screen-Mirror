@@ -1,43 +1,12 @@
-# Nakiri Screen Mirror 部署文档
+# Docker + EdgeOne 部署指南
 
-## WebRTC 连接诊断与画质说明
+本项目唯一支持的生产部署架构：EdgeOne Pages 托管前端静态资源，EdgeOne 将信令和 TURN 凭据 API 回源到 Docker Compose 中的 Node.js 服务；同一 Compose 项目运行 coturn。Node.js、EdgeOne 只处理 WebSocket 信令/凭据，不承载媒体。浏览器之间的 WebRTC 尽可能直连；需要中继时，媒体由浏览器直接访问 coturn 公网地址，绝不经 EdgeOne HTTP/CDN 代理。
 
-首页的“连接诊断”会分别显示 WebSocket 信令状态和浏览器间的 WebRTC/ICE 状态。信令显示 `connected` 只说明信令通道可用；只有 WebRTC 显示 `connected` 才表示媒体链路已建立。ICE 候选线路、实际分辨率、帧率和码率来自浏览器 `getStats()`，浏览器未提供相应字段时会显示“暂无数据”。
+生产默认信令 URL 为 `wss://signaling-server.unia.love/connect`。这是部署在 EdgeOne 代理域名上的 Docker 信令路径。构建预览或 staging 可通过 `VITE_SIGNALING_URL` 覆盖；该值在前端构建时写入资源。TURN 长期共享密钥不得注入前端。
 
-屏幕共享可选择均衡（1080p/30）、高清（1080p/60）、超清（1440p/60）和 4K（2160p/30）。这是采集目标和发送码率上限，不是保证值：浏览器、显示器、编码器、上行带宽或接收设备不支持时，实际画质会降低；不支持所选采集约束时会回退到均衡档。较高档位会增加 CPU/GPU、带宽和耗电。
+## 1. EdgeOne Pages 前端
 
-Node.js 信令服务、Nginx 和 EdgeOne 只承载 WebSocket 信令，不转发视频/音频流。媒体由两台浏览器通过 WebRTC 尽可能直接传输。项目当前配置 STUN、未配置 TURN，因此严格 NAT、企业防火墙或 UDP 受限网络可能导致 ICE 失败；信令可连通并不代表 P2P 媒体一定可达。出现此类问题时，先查看诊断面板的 ICE 状态和候选线路，并跨不同网络验证；必要时另行部署 TURN 中继（此时媒体会经过 TURN）。
-
-重连过程中信令状态会显示为 `reconnecting`，并显示已重试次数和最近错误。部署端的 `/healthz` 仍只是 HTTP 存活检查；要确认 WSS 握手和信令转发，请按下方 `WSS_URL=... bash scripts/deploy-docker.sh` 探测说明执行。
-
-项目现在支持两种后端部署方式：
-
-1. 推荐的新方案：腾讯云 EdgeOne 托管前端，阿里云 ECS Docker 运行 Node.js WebSocket 后端；
-2. 兼容旧方案：Cloudflare Workers + Durable Objects。
-
-本文重点说明 EdgeOne + 阿里云 Docker 方案。
-
-新方案由两部分组成：
-
-- 根目录的 React Router 前端，构建后是静态文件；
-- `backend/` 下的 Node.js WebSocket 服务，负责 `/connect` 信令；
-- `worker/` 下仍保留旧的 Cloudflare Worker 实现，不参与新方案部署。
-
-前端部署到 EdgeOne Pages，信令服务继续运行在云服务器 Docker 中；信令域名可以通过 EdgeOne WebSocket 回源到云服务器，也可以直接使用 Nginx 暴露的 HTTPS 域名。两部分都需要 HTTPS，前端通过 `wss://` 连接信令服务。
-
-## 腾讯云 EdgeOne Pages 直接部署
-
-当前仓库可以直接从 GitHub 导入 EdgeOne Pages。EdgeOne Pages 负责构建和托管 React Router 前端，仓库中的 `backend/`、`docker-compose.yml` 和 `scripts/deploy-docker.sh` 不会在 Pages 构建环境中启动，信令后端仍需部署到云服务器。
-
-### 1. 导入 GitHub 仓库
-
-在 EdgeOne Pages 控制台创建项目，连接以下仓库：
-
-```text
-https://github.com/Polaris-Leo/Nakiri-Screen-Mirror
-```
-
-推荐构建配置：
+在 EdgeOne Pages 创建项目并连接仓库。构建配置：
 
 ```text
 框架：React Router
@@ -47,328 +16,91 @@ Node.js：22.11.0
 输出目录：build/client
 ```
 
-本项目已启用 SPA 和预渲染模式，构建产物位于 `build/client/`。如果使用 EdgeOne CLI，也可以在项目根目录执行：
-
-```bash
-npx edgeone pages deploy
-```
-
-### 2. 设置 EdgeOne 环境变量
-
-在 EdgeOne Pages 项目的生产环境变量中设置：
+本项目启用 SPA/预渲染，未知客户端路由应回退到 `/index.html`。在 Pages 的 Production 构建环境设置：
 
 ```text
 VITE_SIGNALING_URL=wss://signaling-server.unia.love/connect
 ```
 
-如需部署预览环境，请同时在 Preview 环境配置相应的信令地址。`VITE_SIGNALING_URL` 必须在构建前设置，因为 Vite 会在构建阶段将它写入前端资源。
+Preview 环境也应明确配置对应的 EdgeOne/Docker 测试信令地址。绑定前端 HTTPS 域名，例如 `mirror.unia.love`。如改动 `VITE_SIGNALING_URL`，必须重新构建前端。
 
-### 3. 绑定前端域名
+## 2. EdgeOne 回源规则
 
-例如将以下域名绑定到 EdgeOne Pages 项目：
+将 `signaling-server.unia.love` 配置为 EdgeOne 站点/加速域名，源站为 Docker 主机公网 IP 或负载均衡地址。EdgeOne 到 Node 服务的源站端口为 `8080`（如在源站前放置 Nginx，也只作为本架构内部反向代理实现细节）。配置 HTTPS 证书并确认 Upgrade/Connection 头、WebSocket 超时和连接保持行为可用。
 
-```text
-mirror.unia.love
-```
+配置以下规则，源站均为同一 Docker Node 服务：
 
-最终通过以下地址访问前端：
+| 匹配路径 | 方法/类型 | 处理 |
+| --- | --- | --- |
+| `/connect` | WebSocket | 启用 WebSocket，代理到 Node 的 `/connect`，保留 `id` 查询参数，不缓存 |
+| `/api/turn-credentials` | HTTPS HTTP API | 代理到 Node 同路径，透传浏览器 Origin，不缓存（缓存规则设为绕过/禁用，不能缓存临时凭据） |
+| `/healthz` | HTTP | 可供源站健康检查使用；不作为 WSS 端到端验证的替代 |
 
-```text
-https://mirror.unia.love
-```
+WSS 前端地址为 `wss://signaling-server.unia.love/connect`；TURN 地址不能指向该 EdgeOne 域名。
 
-### 4. 信令后端部署边界
+## 3. Docker Compose、环境与长期密钥
 
-EdgeOne Pages 不会执行本项目的 Docker Compose 服务。信令服务需要在云服务器上执行：
-
-```bash
-cd ~/Nakiri-Screen-Mirror
-docker login docker.xuanyuan.run
-bash scripts/deploy-docker.sh
-```
-
-后端监听 `127.0.0.1:8080`，然后通过 Nginx 将 `signaling-server.unia.love` 反向代理到该端口，并配置 WebSocket 升级。也可以将信令域名接入 EdgeOne 网站加速，在 EdgeOne 中开启 WebSocket 并将源站指向该云服务器。
-
-浏览器最终连接的地址必须是：
-
-```text
-wss://signaling-server.unia.love/connect
-```
-
-EdgeOne 官方文档：
-
-- [EdgeOne Pages React Router 部署](https://pages.edgeone.ai/document/framework-freact-router)
-- [EdgeOne WebSocket 配置](https://cloud.tencent.com/document/product/1552/73071)
-
-## 一、EdgeOne + 阿里云 Docker 快速部署
-
-### 1. 构建前端
-
-在项目根目录执行：
-
-PowerShell：
-
-```powershell
-$env:VITE_SIGNALING_URL = "wss://signal.example.com/connect"
-npm install
-npm run typecheck
-npm run build
-```
-
-Linux/macOS：
+在 Linux Docker 主机准备仓库和环境文件：
 
 ```bash
-VITE_SIGNALING_URL=wss://signal.example.com/connect npm install
-VITE_SIGNALING_URL=wss://signal.example.com/connect npm run typecheck
-VITE_SIGNALING_URL=wss://signal.example.com/connect npm run build
+cp .env.example .env
+mkdir -p secrets
+openssl rand -hex 32 > secrets/turn_secret
+chmod 700 secrets
+chmod 600 secrets/turn_secret
 ```
 
-将 `build/client/` 上传到 EdgeOne 静态站点。EdgeOne 需要将未知路径回退到 `/index.html`，并开启 HTTPS。
+编辑本机 `.env`：设置真实 `TURN_EXTERNAL_IP`、`TURN_REALM`、`TURN_URLS`（例如 `turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp`）、`ALLOWED_ORIGINS=https://mirror.unia.love`、`TRUST_PROXY`，并确认 `TURN_SECRET_FILE=./secrets/turn_secret` 指向上述文件。`TURN_URLS` 的主机名必须是 TURN 主机自身的公网 DNS 名称，解析到 coturn 公网 IP；DNS 记录须为 DNS-only/直连，不能使用 EdgeOne/CDN 代理。`TURN_EXTERNAL_IP` 应为该 coturn 主机公网地址。请在真实值生效后再开放服务。
 
-### 2. 部署阿里云 Docker 后端
+以文件型 Docker Secret 将同一主机密钥挂载给 Node 和 coturn：Node 从 `/run/secrets/turn_secret` 生成短期 HMAC 凭据，coturn 启动脚本在容器内创建受限权限的运行配置。密钥文件和 `.env` 已被忽略，不要提交、记录到日志、放进镜像/命令行或设置为 `VITE_*`。
 
-将仓库上传到 ECS，在项目根目录执行：
+在仓库根目录启动并检查：
 
 ```bash
-docker login docker.xuanyuan.run
-bash scripts/deploy-docker.sh
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+curl --fail https://signaling-server.unia.love/healthz
 ```
 
-本项目 Dockerfile 使用轩辕镜像的 Node.js 基础镜像：
-
-```text
-docker.xuanyuan.run/library/node:20-alpine
-```
-
-由于该镜像仓库要求登录，首次部署或凭据失效后需要重新执行 `docker login docker.xuanyuan.run`。仅在 `/etc/docker/daemon.json` 中配置 `registry-mirrors` 不会自动替代 Dockerfile 中的镜像地址。
-
-脚本会自动检查 Docker 和 Compose、构建镜像、启动服务、清理孤儿容器，并轮询健康检查。`/healthz` 只表示 HTTP 服务已启动，不代表公网 WSS 链路可用。当前健康响应还会标识 WebSocket 路径：
-
-```json
-{"status":"ok","service":"nakiri-signalling","websocket":{"path":"/connect","protocol":"websocket"}}
-```
-
-后端默认监听 `8080`，可通过 `PORT` 和 `HOST` 环境变量调整。
-
-如果已经配置好 Nginx 或 EdgeOne 的公网域名，部署脚本会在交互终端中询问公网 WSS 地址；输入 `wss://.../connect` 后，部署结束时会执行端到端 WebSocket 探针，直接回车则跳过。自动化/非交互环境不会等待输入，可通过 `WSS_URL` 显式启用探针：
+`/healthz` 只表示 Node HTTP 服务存活。该部署脚本会先执行 `docker compose up -d --build --remove-orphans`，再运行 WSS 探针；它会更改本机 Compose 服务状态，不是只读验证命令。仅在明确要部署/更新服务时运行：
 
 ```bash
 WSS_URL=wss://signaling-server.unia.love/connect bash scripts/deploy-docker.sh
 ```
 
-该探针会在容器内创建两个临时 WebSocket 连接，验证 TLS、HTTP 101 升级、`/connect` 路径、6 位连接码和一条信令消息转发。探针通过后才会输出最终部署成功；未设置 `WSS_URL` 时只执行本机 HTTP 健康检查。
-
-如果信令服务通过其他地址暴露，可以覆盖健康检查地址：
+只验证已运行服务的公网 WSS 路由而不触发部署时，可在仓库根目录对现有容器运行同一探针：
 
 ```bash
-HEALTH_URL=http://127.0.0.1:18080/healthz bash scripts/deploy-docker.sh
+docker compose exec -T nakiri-signalling node dist/probe.js wss://signaling-server.unia.love/connect
 ```
 
-脚本失败时会自动打印最近 100 行后端日志。也可以手动查看：
+该容器内探针命令要求目标 Compose 服务已运行；探针会使用临时 peer ID 交换一条测试信令，不会执行 Compose 部署/重建。也可查看 `docker compose logs -f nakiri-signalling` 与 `docker compose logs -f coturn`，不得让日志输出 Secret 或短期凭据。
 
-```bash
-docker compose logs -f nakiri-signalling
-```
+### 安全组/主机防火墙端口
 
-如果服务器没有 Docker，可先按云厂商官方文档安装 Docker，再执行以上命令。
+- `8080/TCP`：Node 源站端口，仅允许 EdgeOne 回源地址或受控负载均衡访问；不要将其当作浏览器公网 WSS 入口。
+- `3478/UDP` 和 `3478/TCP`：coturn TURN/STUN listener，浏览器直连。
+- `49160–49200/UDP`：Compose 配置的 coturn relay 端口范围，必须完整允许入站/出站并与安全组及主机防火墙一致。
+- `5349/TCP` 未在当前 Compose 中发布；仅在配置 coturn TLS 证书及相应选项后才可开放。
 
-### 3. 配置 EdgeOne 信令回源
+不要为 TURN 媒体开放 EdgeOne 代理端口或将媒体端口映射到 CDN。只向必要来源开放管理/SSH 端口。
 
-为 `signal.example.com` 配置 EdgeOne 站点或代理规则：
+### Secret 轮换
 
-- 源站填写阿里云 ECS 公网 IP 或负载均衡地址；
-- 源站端口映射到 Docker 的 `8080`；
-- 开启 WebSocket；
-- 配置 HTTPS 证书；
-- 将 `/connect` 的 WebSocket 请求转发到后端；
-- 将 `/healthz` 用作健康检查。
+准备新的高熵随机值写入受限权限的 Secret 文件，安排维护窗口后更新该文件并重建/重启 `nakiri-signalling` 与 `coturn`，确认两者均已读取同一新密钥，再用新临时凭据验证。重启会使既有短期凭据失效，因此应考虑凭据 TTL 和现有会话；不要同时保留或记录旧密钥。轮换后确认旧凭据不再可用、日志与镜像中无密钥，并按组织安全策略销毁旧副本/备份。
 
-前端域名例如 `mirror.example.com`，信令域名例如 `signal.example.com`。不要把 `VITE_SIGNALING_URL` 设置成 `http://` 或 `ws://`，生产环境使用 `wss://`。
+## 4. 部署验证
 
-### 4. 多实例说明
+1. 在浏览器 Network 面板确认 `wss://signaling-server.unia.love/connect?id=<六位数字>` 经 EdgeOne 返回 `101 Switching Protocols`，两端输入同一码可交换信令。
+2. 请求 `https://signaling-server.unia.love/api/turn-credentials`，确认返回短期 ICE 用户名/密码且响应不缓存；核对响应/日志中没有长期 Secret。
+3. 同一网络测试媒体直连并观察诊断信息/`getStats()`。再用不同运营商或网络的两台设备测试跨网络连接。
+4. 在受控测试客户端将 `RTCPeerConnection` 的 `iceTransportPolicy` 临时设置为 `relay`，验证候选对显示 relay 且媒体可用；此项是测试配置，不要作为默认生产策略。
+5. 验证 coturn DNS 直接解析到 coturn 公网地址，且 UDP/TCP 3478 与 UDP 49160–49200 从外网可达。信令连通不代表 TURN 或 WebRTC 媒体必然可达。
 
-当前 `backend/` 使用单实例内存保存 WebSocket 连接。单台 ECS 可以直接运行；如果部署多台 ECS 或多个容器，需要增加 Redis Pub/Sub 或改用阿里云负载均衡的会话保持，否则发送方和接收方落到不同实例时无法互相找到连接。
+## 故障排查
 
-WebRTC 视频本身仍然由浏览器端 P2P 传输，Docker 后端主要承载信令消息。
-
-## 二、准备工作
-
-需要准备 Cloudflare 账号、已接入 Cloudflare 的域名、Node.js 20+，以及前端域名（如 `mirror.example.com`）和 Worker 信令域名（如 `signal.example.com`）。
-
-## 三、部署 Cloudflare Worker（旧方案）
-
-在本地或服务器执行：
-
-```bash
-cd worker
-npm install
-npx wrangler login
-npm run deploy
-```
-
-也可以使用仓库约定的 pnpm：
-
-```bash
-corepack enable
-pnpm install --frozen-lockfile
-pnpm exec wrangler login
-pnpm deploy
-```
-
-`worker/wrangler.toml` 已配置 `SignallingServer` Durable Object 和 SQLite 迁移。部署完成后，Wrangler 会输出类似：
-
-```text
-https://nakiri-screen-mirror-signaling.<your-subdomain>.workers.dev
-```
-
-WebSocket 地址为：
-
-```text
-wss://nakiri-screen-mirror-signaling.<your-subdomain>.workers.dev/connect?id=123456
-```
-
-生产环境推荐配置自定义域名。在 `worker/wrangler.toml` 末尾增加：
-
-```toml
-[[routes]]
-pattern = "signal.example.com"
-custom_domain = true
-```
-
-然后重新执行 `npm run deploy`。也可以在 Cloudflare 控制台的 **Workers & Pages → nakiri-screen-mirror-signaling → Settings → Domains & Routes** 中添加 Custom Domain。
-
-## 四、构建前端（通用说明）
-
-信令地址通过 `VITE_SIGNALING_URL` 配置。
-
-PowerShell：
-
-```powershell
-$env:VITE_SIGNALING_URL = "wss://signal.example.com/connect"
-npm install
-npm run typecheck
-npm run build
-```
-
-Linux/macOS：
-
-```bash
-VITE_SIGNALING_URL=wss://signal.example.com/connect npm install
-VITE_SIGNALING_URL=wss://signal.example.com/connect npm run typecheck
-VITE_SIGNALING_URL=wss://signal.example.com/connect npm run build
-```
-
-静态文件位于：
-
-```text
-build/client/
-```
-
-不设置 `VITE_SIGNALING_URL` 时，会回退到原来的 `wss://signaling.pexni.com/connect`。
-
-## 四、部署到 Nginx
-
-Ubuntu 示例：
-
-```bash
-sudo apt update
-sudo apt install -y nginx
-sudo mkdir -p /var/www/webrtc-screen-mirror
-rsync -av --delete build/client/ user@your-server:/var/www/webrtc-screen-mirror/
-```
-
-创建 `/etc/nginx/sites-available/webrtc-screen-mirror`：
-
-```nginx
-server {
-    listen 80;
-    listen [::]:80;
-    server_name mirror.example.com;
-
-    root /var/www/webrtc-screen-mirror;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-```
-
-启用并检查：
-
-```bash
-sudo ln -s /etc/nginx/sites-available/webrtc-screen-mirror /etc/nginx/sites-enabled/webrtc-screen-mirror
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-配置 HTTPS：
-
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d mirror.example.com
-```
-
-生产环境使用 `https://mirror.example.com` 访问。浏览器屏幕共享通常要求 HTTPS。
-
-## 五、验证部署
-
-1. 打开前端页面并查看开发者工具 Network 面板。
-2. 确认 WebSocket 请求为 `wss://signal.example.com/connect?id=六位数字`。
-3. 确认 WebSocket 握手返回 `101 Switching Protocols`。
-4. 在第二台设备输入第一台设备显示的投屏码。
-5. 允许屏幕共享权限并确认观看端出现画面。
-
-当前 Worker 只处理 `/connect`，访问其他路径返回 404 是预期行为。
-
-## 六、常见问题
-
-### 页面打开但连接服务器失败
-
-- 检查 `VITE_SIGNALING_URL` 是否正确；
-- 确认使用 `wss://` 而不是 `ws://`；
-- 检查 Worker 自定义域名、DNS 和证书；
-- 确认前端和 Worker 已一起更新。
-
-### 页面刷新后 404
-
-检查 Nginx 或静态托管服务是否配置了 SPA fallback，将未知路径回退到 `/index.html`。
-
-### 信令成功但 WebRTC 失败
-
-先在同一局域网测试，并关闭可能拦截 UDP 的 VPN 或企业代理。项目目前只有 STUN，没有 TURN；严格 NAT 或 UDP 受限环境可能需要后续配置 TURN 服务。
-
-### Worker 返回 400
-
-投屏码必须是 6 位数字。缺失、长度错误或包含非数字字符的 `id` 会被拒绝。
-
-## 七、更新流程
-
-Worker 更新：
-
-```bash
-cd worker
-npm install
-npm run deploy
-```
-
-前端更新：
-
-```bash
-npm install
-npm run typecheck
-npm run build
-rsync -av --delete build/client/ user@your-server:/var/www/webrtc-screen-mirror/
-sudo systemctl reload nginx
-```
-
-修改 Worker 房间路由时，前端和 Worker 应一起发布，避免旧前端继续使用旧的固定房间模型。
-
-## 八、安全注意事项
-
-- 不要提交 Cloudflare API Token、密码或 TURN 凭据；
-- 6 位投屏码只是临时标识，不是身份认证；
-- 不要删除 `worker/wrangler.toml` 中已有的 Durable Object 迁移记录；
-- 生产环境建议使用 Cloudflare Custom Domain，而不是直接依赖 `workers.dev`。
-
-参考：[Cloudflare Workers Wrangler 配置](https://developers.cloudflare.com/workers/wrangler/configuration/)、[Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)、[Durable Objects 入门](https://developers.cloudflare.com/durable-objects/get-started/)。
+- 页面能开但 WSS 失败：检查 `VITE_SIGNALING_URL` 是否为 `wss://.../connect`、EdgeOne WebSocket 开关/源站/Upgrade 及 TLS，并确认 `id` 查询参数未丢失。
+- TURN 凭据请求失败或被复用：确认 `/api/turn-credentials` 路由到 Node、缓存已禁用、Origin 与 `.env` 一致、Secret 文件存在且权限正确。
+- 信令成功而 ICE 失败：检查 coturn 公网 DNS 是否直连而非代理、`TURN_EXTERNAL_IP`、3478 UDP/TCP 和 relay UDP 端口范围/防火墙；通过诊断区分直连与 relay。
+- 前端路径刷新 404：在 EdgeOne Pages 配置 SPA fallback 到 `/index.html`。
