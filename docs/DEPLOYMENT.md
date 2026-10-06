@@ -77,7 +77,7 @@ WSS_URL=wss://signaling-server.unia.love/connect bash scripts/deploy-docker.sh
 bash scripts/upgrade-docker.sh
 ```
 
-升级脚本要求当前检出命名分支（不接受 detached HEAD），并拒绝未提交的跟踪或未跟踪文件；被 Git 忽略的 `.env` 与 `secrets/` 不会影响检查，也不会被覆盖。它只对当前分支配置的 upstream 执行 `git pull --ff-only`，不硬编码远端或分支；成功后复用 `scripts/deploy-docker.sh` 完成 Compose 配置验证、构建和部署。更新前不会停止服务，部署失败也不会自动回滚 Git 历史；容器保持 detached 运行，部署脚本仍会等待健康检查及（如配置）公网 WSS 探针结果。
+升级脚本要求当前检出命名分支（不接受 detached HEAD），并拒绝未提交的跟踪或未跟踪文件；被 Git 忽略的 `.env` 与 `secrets/` 不会影响检查，也不会被覆盖。顺序为：确认 Git 可用、当前分支有名称及 upstream、`git status --porcelain` 为空；随后只读预检 Docker CLI、守护进程（`docker info`）和 Compose 插件（`docker compose version`）；全部通过后才对当前分支配置的 upstream 执行 `git pull --ff-only`。任一 Docker 预检失败都会在 pull 前退出。pull 成功后复用 `scripts/deploy-docker.sh`，由部署脚本再次执行自己的 Docker/Compose 检查以防预检后的状态变化，然后完成 Compose 配置验证、构建和部署。更新前不会停止服务，部署失败也不会自动回滚 Git 历史；容器保持 detached 运行，部署脚本仍会等待健康检查及（如配置）公网 WSS 探针结果。
 
 只验证已运行服务的公网 WSS 路由而不触发部署时，可在仓库根目录对现有容器运行同一探针：
 

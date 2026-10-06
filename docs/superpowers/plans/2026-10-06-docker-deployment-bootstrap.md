@@ -129,9 +129,10 @@ git commit -m "feat: bootstrap Docker deployment configuration"
 **Interfaces:**
 - `bash scripts/upgrade-docker.sh` runs from any working directory by resolving its own project root.
 - It requires `git` and Docker Compose deployment prerequisites, a named current branch, a configured upstream, and an empty `git status --porcelain`. Ignored `.env` and `secrets/` remain untouched and do not make the tree dirty.
+- After the Git executable, named-branch, upstream, and clean-status checks, but before `git pull --ff-only`, perform read-only Docker preflight in this order: verify the Docker CLI exists, run `docker info`, then run `docker compose version`. Any failed preflight exits before pull. Keep the deploy script's Docker/Compose checks after pull to protect against state changes between preflight and deployment.
 - On a valid checkout, run exactly `git pull --ff-only`; call `bash "$PROJECT_ROOT/scripts/deploy-docker.sh"` only if the pull succeeds. Do not hard-code a branch or remote.
 - Never stash, reset, switch branches, run `docker compose down`, or automatically roll back. A failed pull must not run Compose; a later deployment failure is reported without rewriting Git history.
-- `tests/scripts/upgrade-docker.sh` copies both scripts into a temporary fixture, prepends fake `git`, `docker`, and `curl`, and verifies the successful order `git pull --ff-only` before Compose config/up; it also verifies dirty-tree, missing-upstream, and failed-pull cases stop before Compose deployment.
+- `tests/scripts/upgrade-docker.sh` copies both scripts into a temporary fixture, prepends fake `git`, `docker`, and `curl`, and verifies Docker CLI/daemon/Compose preflight order before `git pull --ff-only`, with Compose config/up after pull; it also verifies missing Docker CLI, failing `docker info`, failing `docker compose version`, dirty-tree, missing-upstream, and failed-pull cases stop before Compose deployment. The missing-CLI case uses an isolated PATH containing fake `git`, `bash`, and `dirname` but no Docker executable.
 
 - [ ] **Step 1: Add the failing upgrade wrapper harness**
 

@@ -29,6 +29,19 @@ if [[ -n "$working_tree" ]]; then
   exit 1
 fi
 
+if ! command -v docker >/dev/null 2>&1; then
+  printf '%s\n' 'Error: Docker CLI is required to upgrade this checkout.' >&2
+  exit 1
+fi
+if ! docker info >/dev/null 2>&1; then
+  printf '%s\n' 'Error: Docker daemon is unavailable; start Docker and retry.' >&2
+  exit 1
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  printf '%s\n' 'Error: Docker Compose plugin is unavailable; install it and retry.' >&2
+  exit 1
+fi
+
 if ! git pull --ff-only; then
   printf '%s\n' 'Error: fast-forward update failed; deployment was not started.' >&2
   exit 1
