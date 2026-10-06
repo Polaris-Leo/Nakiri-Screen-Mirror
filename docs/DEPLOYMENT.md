@@ -63,13 +63,19 @@ docker compose ps
 curl --fail https://signaling-server.unia.love/healthz
 ```
 
-`/healthz` 只表示 Node HTTP 服务存活。自动化部署可运行已有部署脚本并传入 EdgeOne 公网 WSS 地址，以验证 TLS、HTTP 101、路径与两端信令转发：
+`/healthz` 只表示 Node HTTP 服务存活。该部署脚本会先执行 `docker compose up -d --build --remove-orphans`，再运行 WSS 探针；它会更改本机 Compose 服务状态，不是只读验证命令。仅在明确要部署/更新服务时运行：
 
 ```bash
 WSS_URL=wss://signaling-server.unia.love/connect bash scripts/deploy-docker.sh
 ```
 
-未设置 `WSS_URL` 时脚本仅执行本机 HTTP 健康检查。也可查看 `docker compose logs -f nakiri-signalling` 与 `docker compose logs -f coturn`，不得让日志输出 Secret 或短期凭据。
+只验证已运行服务的公网 WSS 路由而不触发部署时，可在仓库根目录对现有容器运行同一探针：
+
+```bash
+docker compose exec -T nakiri-signalling node dist/probe.js wss://signaling-server.unia.love/connect
+```
+
+该容器内探针命令要求目标 Compose 服务已运行；探针会使用临时 peer ID 交换一条测试信令，不会执行 Compose 部署/重建。也可查看 `docker compose logs -f nakiri-signalling` 与 `docker compose logs -f coturn`，不得让日志输出 Secret 或短期凭据。
 
 ### 安全组/主机防火墙端口
 
