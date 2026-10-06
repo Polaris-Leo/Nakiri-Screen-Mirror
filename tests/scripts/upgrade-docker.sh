@@ -111,6 +111,10 @@ PATH="$FIXTURE/no-docker-bin" run_upgrade >/dev/null 2>&1 && fail 'missing Docke
 assert_preflight_failure 'missing Docker CLI'
 
 reset_case
+FAKE_GIT_BRANCH='' run_upgrade >/dev/null 2>&1 && fail 'detached HEAD should be rejected'
+assert_preflight_failure 'detached HEAD'
+
+reset_case
 FAKE_GIT_STATUS=' M tracked.txt' run_upgrade >/dev/null 2>&1 && fail 'dirty checkout should be rejected'
 ! grep -q '^docker:compose up ' "$CALL_LOG" || fail 'dirty checkout reached Docker Compose up'
 
