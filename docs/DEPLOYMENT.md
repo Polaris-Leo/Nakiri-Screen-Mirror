@@ -69,6 +69,16 @@ chmod 600 secrets/turn_secret
 WSS_URL=wss://signaling-server.unia.love/connect bash scripts/deploy-docker.sh
 ```
 
+### 从当前分支安全升级
+
+在工作树干净且当前分支已配置 upstream 时，可从仓库根目录运行以下命令；脚本本身会解析项目根目录，因此也可从其他工作目录通过脚本路径调用：
+
+```bash
+bash scripts/upgrade-docker.sh
+```
+
+升级脚本要求当前检出命名分支（不接受 detached HEAD），并拒绝未提交的跟踪或未跟踪文件；被 Git 忽略的 `.env` 与 `secrets/` 不会影响检查，也不会被覆盖。它只对当前分支配置的 upstream 执行 `git pull --ff-only`，不硬编码远端或分支；成功后复用 `scripts/deploy-docker.sh` 完成 Compose 配置验证、构建和部署。更新前不会停止服务，部署失败也不会自动回滚 Git 历史；容器保持 detached 运行，部署脚本仍会等待健康检查及（如配置）公网 WSS 探针结果。
+
 只验证已运行服务的公网 WSS 路由而不触发部署时，可在仓库根目录对现有容器运行同一探针：
 
 ```bash
