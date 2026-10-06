@@ -54,8 +54,8 @@ bash scripts/deploy-docker.sh
 cp .env.example .env
 # 编辑 .env：设置真实 TURN_EXTERNAL_IP、TURN_REALM、TURN_URLS、ALLOWED_ORIGINS、TRUST_PROXY
 mkdir -p secrets
-openssl rand -hex 32 > secrets/turn_secret
 chmod 700 secrets
+(umask 077; openssl rand -hex 32 > secrets/turn_secret)
 chmod 600 secrets/turn_secret
 ```
 

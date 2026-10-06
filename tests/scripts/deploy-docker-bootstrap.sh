@@ -43,6 +43,8 @@ assert_no_up() {
 
 success="$fixture/success"
 make_fixture "$success"
+mkdir -p "$success/secrets"
+chmod 755 "$success/secrets"
 if ! output="$(
   cd "$success"
   PATH="$success/bin:$PATH" DOCKER_CALL_LOG="$success/docker.log" \
@@ -62,6 +64,7 @@ assert_contains "$success/.env" 'TURN_CREDENTIAL_TTL_SECONDS=3600'
 assert_contains "$success/.env" 'TRUST_PROXY=false'
 [[ "$(<"$success/secrets/turn_secret")" == 'test-secret-not-production' ]] || { printf 'FAIL: secret file content mismatch\n' >&2; exit 1; }
 [[ "$(stat -c '%a' "$success/secrets/turn_secret")" == 600 ]] || { printf 'FAIL: secret file mode is not 600\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$success/secrets")" == 700 ]] || { printf 'FAIL: secrets directory mode is not 700\n' >&2; exit 1; }
 if [[ "$output" == *'test-secret-not-production'* ]]; then
   printf 'FAIL: secret appeared in captured output\n' >&2
   exit 1
