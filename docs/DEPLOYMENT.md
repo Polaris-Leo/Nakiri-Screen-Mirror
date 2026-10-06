@@ -40,34 +40,44 @@ WSS 前端地址为 `wss://signaling-server.unia.love/connect`；TURN 地址不�
 
 ## 3. Docker Compose、环境与长期密钥
 
-在 Linux Docker 主机准备仓库和环境文件：
+首次部署时，在仓库根目录运行引导脚本：
+
+```bash
+bash scripts/deploy-docker.sh
+```
+
+首次运行会在终端提示输入 TURN 主机公网 IP（`TURN_EXTERNAL_IP`）、TURN Realm（`TURN_REALM`）和允许的前端 Origin（`ALLOWED_ORIGINS`）。非交互运行时，可先通过同名环境变量提供这三项；缺少任一必填值会在启动服务前失败。未设置 `TURN_URLS` 时会按 Realm 生成 UDP/TCP 3478 地址，也可通过 `TURN_URLS` 环境变量指定自定义端点。`TURN_CREDENTIAL_TTL_SECONDS` 默认 `3600`，`TRUST_PROXY` 默认 `false`。
+
+首次配置会新建 `.env` 和 `secrets/turn_secret`；长期 Secret 只写入文件，不写入 `.env`、终端或日志。已有 `.env` 不会被读取为 shell 代码、覆盖或改写；已有非空 Secret 会复用，不会替换。示例占位值或 Compose 配置错误会在服务状态变更前拒绝部署。若需非交互地预先准备配置，使用以下命令并编辑 `.env` 填入真实值：
 
 ```bash
 cp .env.example .env
+# 编辑 .env：设置真实 TURN_EXTERNAL_IP、TURN_REALM、TURN_URLS、ALLOWED_ORIGINS、TRUST_PROXY
 mkdir -p secrets
-openssl rand -hex 32 > secrets/turn_secret
 chmod 700 secrets
+(umask 077; openssl rand -hex 32 > secrets/turn_secret)
 chmod 600 secrets/turn_secret
 ```
 
-编辑本机 `.env`：设置真实 `TURN_EXTERNAL_IP`、`TURN_REALM`、`TURN_URLS`（例如 `turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp`）、`ALLOWED_ORIGINS=https://mirror.unia.love`、`TRUST_PROXY`，并确认 `TURN_SECRET_FILE=./secrets/turn_secret` 指向上述文件。`TURN_URLS` 的主机名必须是 TURN 主机自身的公网 DNS 名称，解析到 coturn 公网 IP；DNS 记录须为 DNS-only/直连，不能使用 EdgeOne/CDN 代理。`TURN_EXTERNAL_IP` 应为该 coturn 主机公网地址。请在真实值生效后再开放服务。
+确认 `TURN_SECRET_FILE=./secrets/turn_secret` 指向上述文件。`TURN_URLS` 的主机名必须是 TURN 主机自身的公网 DNS 名称，解析到 coturn 公网 IP；DNS 记录须为 DNS-only/直连，不能使用 EdgeOne/CDN 代理。`TURN_EXTERNAL_IP` 应为该 coturn 主机公网地址。请在真实值生效后再开放服务。
 
 以文件型 Docker Secret 将同一主机密钥挂载给 Node 和 coturn：Node 从 `/run/secrets/turn_secret` 生成短期 HMAC 凭据，coturn 启动脚本在容器内创建受限权限的运行配置。密钥文件和 `.env` 已被忽略，不要提交、记录到日志、放进镜像/命令行或设置为 `VITE_*`。
 
-在仓库根目录启动并检查：
-
-```bash
-docker compose config --quiet
-docker compose up -d --build
-docker compose ps
-curl --fail https://signaling-server.unia.love/healthz
-```
-
-`/healthz` 只表示 Node HTTP 服务存活。该部署脚本会先执行 `docker compose up -d --build --remove-orphans`，再运行 WSS 探针；它会更改本机 Compose 服务状态，不是只读验证命令。仅在明确要部署/更新服务时运行：
+脚本会在部署前运行 `docker compose config --quiet`，随后以 `docker compose up -d --build --remove-orphans` 启动容器。容器在后台 detached 运行；部署脚本本身保持前台运行，等待健康检查并按需执行公网 WSS 探针，再显示容器状态。`/healthz` 只表示 Node HTTP 服务存活。该命令会更改本机 Compose 服务状态，不是只读验证；仅在明确要部署/更新服务时运行：
 
 ```bash
 WSS_URL=wss://signaling-server.unia.love/connect bash scripts/deploy-docker.sh
 ```
+
+### 从当前分支安全升级
+
+在工作树干净且当前分支已配置 upstream 时，可从仓库根目录运行以下命令；脚本本身会解析项目根目录，因此也可从其他工作目录通过脚本路径调用：
+
+```bash
+bash scripts/upgrade-docker.sh
+```
+
+升级脚本要求当前检出命名分支（不接受 detached HEAD），并拒绝未提交的跟踪或未跟踪文件；被 Git 忽略的 `.env` 与 `secrets/` 不会影响检查，也不会被覆盖。顺序为：确认 Git 可用、当前分支有名称及 upstream、`git status --porcelain` 为空；随后只读预检 Docker CLI、守护进程（`docker info`）和 Compose 插件（`docker compose version`）；全部通过后才对当前分支配置的 upstream 执行 `git pull --ff-only`。任一 Docker 预检失败都会在 pull 前退出。pull 成功后复用 `scripts/deploy-docker.sh`，由部署脚本再次执行自己的 Docker/Compose 检查以防预检后的状态变化，然后完成 Compose 配置验证、构建和部署。更新前不会停止服务，部署失败也不会自动回滚 Git 历史；容器保持 detached 运行，部署脚本仍会等待健康检查及（如配置）公网 WSS 探针结果。
 
 只验证已运行服务的公网 WSS 路由而不触发部署时，可在仓库根目录对现有容器运行同一探针：
 
