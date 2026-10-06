@@ -187,6 +187,7 @@ fi
 
 bootstrap_env
 validate_existing_env
+unset TURN_SECRET_FILE TURN_EXTERNAL_IP TURN_REALM TURN_URLS TURN_CREDENTIAL_TTL_SECONDS ALLOWED_ORIGINS TRUST_PROXY
 
 if grep -Eq '^[[:space:]]*TURN_EXTERNAL_IP[[:space:]]*=[[:space:]]*"?203\.0\.113\.10"?[[:space:]]*(#.*)?$' "$ENV_FILE" \
   || grep -Eq '^[[:space:]]*TURN_REALM[[:space:]]*=[[:space:]]*"?turn\.example\.com"?[[:space:]]*(#.*)?$' "$ENV_FILE" \
