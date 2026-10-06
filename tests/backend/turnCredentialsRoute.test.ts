@@ -42,7 +42,7 @@ describe("GET /api/turn-credentials", () => {
 		const body = await response.json();
 		expect(Object.keys(body).sort()).toEqual(["expiresAt", "iceServers"]);
 		expect(body.iceServers).toHaveLength(1);
-		expect(Object.keys(body.iceServers[0]).sort()).toEqual(["credential", "username", "urls"]);
+		expect(Object.keys(body.iceServers[0]).sort()).toEqual(["credential", "urls", "username"]);
 		expect(body.iceServers[0].urls).toEqual(validConfig.turnUrls);
 		expect(typeof body.iceServers[0].username).toBe("string");
 		expect(body.iceServers[0].username).toMatch(/^\d+:[0-9a-f-]{36}$/);

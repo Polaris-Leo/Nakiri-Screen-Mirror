@@ -98,8 +98,9 @@ describe("normalizeWebRTCStats", () => {
 
 	it("ignores malformed optional RTT and media numeric values", () => {
 		const stats = report(
-			{ id: "pair", type: "candidate-pair", selected: true, localCandidateId: "local", currentRoundTripTime: "0.2" },
+			{ id: "pair", type: "candidate-pair", selected: true, localCandidateId: "local", remoteCandidateId: "remote", currentRoundTripTime: "0.2" },
 			{ id: "local", type: "local-candidate", candidateType: "host" },
+			{ id: "remote", type: "remote-candidate", candidateType: "srflx" },
 			{ id: "video", type: "inbound-rtp", kind: "video", frameWidth: "1280", frameHeight: Number.NaN, framesPerSecond: Infinity, bytesReceived: "10" },
 		);
 		expect(normalizeWebRTCStats(stats, "receiver")).toEqual({

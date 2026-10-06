@@ -357,7 +357,7 @@ git commit -m "feat: show selected WebRTC path and RTT"
 
 **Interfaces:**
 - Add private `restartIceAndRenegotiate(peerConnection: RTCPeerConnection): Promise<boolean>`; it returns true only after an ICE-restart offer is sent successfully over an open signaling socket. Generate that offer with `createOffer({ iceRestart: true })` rather than calling both `restartIce()` and `createOffer()` (which can schedule duplicate negotiation).
-- Add one sender-only recovery generation/lock and a 10-second ICE-restart answer timeout so old callbacks cannot restart or close a newer PeerConnection and an unanswered restart cannot hang forever.
+- Add one sender-only recovery generation/lock and a 10-second ICE-restart answer timeout that starts only after the restart offer is successfully sent. This prevents old callbacks from restarting or closing a newer PeerConnection and ensures an unanswered restart cannot hang forever.
 - Keep the current full reconnection as fallback, and keep the existing disconnected grace window.
 
 - [ ] **Step 1: Add failing tests for restart-first and fallback behavior**
@@ -375,7 +375,7 @@ Before creating a new PeerConnection, verify the existing PC is current and sign
 
 - [ ] **Step 4: Preserve reconnect and offer/answer failure behavior**
 
-On signaling reconnection, attempt recovery only once per generation. If restart cannot be issued, or no valid answer returns within 10 seconds, close and fully recreate the sender PeerConnection with the existing local stream. Cancel the timeout when a valid answer is applied or the connection reaches `connected`; clear timers and locks on `close()`. Reuse existing queued ICE handling for incoming answer/candidates.
+On signaling reconnection, attempt recovery only once per generation. If restart cannot be issued, close and fully recreate the sender PeerConnection with the existing local stream. After a restart offer is successfully sent, allow 10 seconds for a valid answer; if none arrives, close and fully recreate the connection. Cancel the answer timeout when a valid answer is applied or the connection reaches `connected`; clear timers and locks on `close()`. Reuse existing queued ICE handling for incoming answer/candidates.
 
 - [ ] **Step 5: Run focused lifecycle tests and complete project checks**
 

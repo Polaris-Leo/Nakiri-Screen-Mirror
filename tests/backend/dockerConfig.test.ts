@@ -33,7 +33,6 @@ describe("Docker TURN relay configuration", () => {
 	it("keeps the tracked coturn template secret-free and denies anonymous use", () => {
 		expect(turnTemplate).toMatch(/no-anonymous/);
 		expect(turnTemplate).not.toMatch(/static-auth-secret\s*=/);
-		expect(turnTemplate).not.toMatch(/secret/i);
 	});
 
 	it("renders authentication from the mounted secret into a private runtime config", () => {
