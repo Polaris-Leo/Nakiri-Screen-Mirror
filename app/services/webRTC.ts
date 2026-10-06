@@ -26,6 +26,7 @@ class WebRTCService {
 	private reconnectRequested = false;
 	private recovering = false;
 	private recoveryAttemptPeer: RTCPeerConnection | null = null;
+	private recoveryAttemptToken = 0;
 	private iceRestartAnswerTimeout: number | null = null;
 	private lastByteSample: { bytes: number; at: number } | null = null;
 	private connectionRequestGeneration = 0;
@@ -269,7 +270,10 @@ class WebRTCService {
 		try {
 			await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
 			if (this.peerConnection !== peerConnection || requestGeneration !== this.connectionRequestGeneration) return;
-			if (answer.type === "answer") this.clearIceRestartRecovery(peerConnection);
+			if (answer.type === "answer") {
+				this.clearIceRestartRecovery(peerConnection);
+				this.reconnectRequested = false;
+			}
 			await this.flushPendingCandidates();
 		} catch (error) {
 			this.recordError("应用 WebRTC answer 失败", error);
@@ -298,15 +302,18 @@ class WebRTCService {
 
 	private requestSenderRecovery() {
 		if (this.role !== "sender" || !this.localStream || !this.peerId) return;
-		if (this.recoveryAttemptPeer === this.peerConnection) return;
 		this.reconnectRequested = true;
+		if (this.recoveryAttemptPeer === this.peerConnection) return;
 		void this.recoverSenderConnection();
 	}
 
 	private async restartIceAndRenegotiate(peerConnection: RTCPeerConnection): Promise<boolean> {
 		const requestGeneration = this.connectionRequestGeneration;
+		const attemptToken = this.recoveryAttemptToken;
 		const isCurrent = () => this.peerConnection === peerConnection &&
-			requestGeneration === this.connectionRequestGeneration;
+			requestGeneration === this.connectionRequestGeneration &&
+			this.recoveryAttemptPeer === peerConnection &&
+			this.recoveryAttemptToken === attemptToken;
 		if (!isCurrent()) return false;
 		if (peerConnection.signalingState !== "stable" ||
 			useWebSocketStore.getState().webSocketState !== "connected") {
@@ -325,7 +332,9 @@ class WebRTCService {
 			}
 			return true;
 		} catch {
-			useWebRTCStore.getState().setDiagnostics({ lastError: "ICE 重启协商失败，将重建 WebRTC 连接" });
+			if (isCurrent()) {
+				useWebRTCStore.getState().setDiagnostics({ lastError: "ICE 重启协商失败，将重建 WebRTC 连接" });
+			}
 			return false;
 		}
 	}
@@ -343,20 +352,30 @@ class WebRTCService {
 		const peerId = this.peerId;
 		this.reconnectRequested = false;
 		this.recoveryAttemptPeer = peerConnection;
+		const attemptToken = ++this.recoveryAttemptToken;
+		const isCurrentAttempt = () =>
+			this.peerConnection === peerConnection &&
+			requestGeneration === this.connectionRequestGeneration &&
+			this.recoveryAttemptPeer === peerConnection &&
+			this.recoveryAttemptToken === attemptToken;
 		try {
-			if (await this.restartIceAndRenegotiate(peerConnection)) {
-				if (this.peerConnection === peerConnection && requestGeneration === this.connectionRequestGeneration) {
-					this.iceRestartAnswerTimeout = window.setTimeout(() => {
-						if (this.peerConnection !== peerConnection || requestGeneration !== this.connectionRequestGeneration) return;
-						this.clearIceRestartRecovery(peerConnection);
-						this.rebuildSenderConnection(peerConnection, requestGeneration, peerId);
-					}, ICE_RESTART_ANSWER_TIMEOUT_MS);
-				}
+			const restarted = await this.restartIceAndRenegotiate(peerConnection);
+			if (!isCurrentAttempt()) return;
+			if (restarted) {
+				this.iceRestartAnswerTimeout = window.setTimeout(() => {
+					if (!isCurrentAttempt()) return;
+					this.clearIceRestartRecovery(peerConnection);
+					this.rebuildSenderConnection(peerConnection, requestGeneration, peerId);
+				}, ICE_RESTART_ANSWER_TIMEOUT_MS);
 				return;
 			}
-			this.rebuildSenderConnection(peerConnection, requestGeneration, peerId);
+			if (isCurrentAttempt()) this.rebuildSenderConnection(peerConnection, requestGeneration, peerId);
 		} finally {
 			this.recovering = false;
+			if (this.reconnectRequested && this.peerConnection === peerConnection) {
+				this.clearIceRestartRecovery(peerConnection);
+				void this.recoverSenderConnection();
+			}
 		}
 	}
 
@@ -373,6 +392,7 @@ class WebRTCService {
 
 	private clearIceRestartRecovery(peerConnection?: RTCPeerConnection) {
 		if (peerConnection && this.recoveryAttemptPeer !== peerConnection) return;
+		this.recoveryAttemptToken += 1;
 		if (this.iceRestartAnswerTimeout !== null) {
 			clearTimeout(this.iceRestartAnswerTimeout);
 			this.iceRestartAnswerTimeout = null;

@@ -33,3 +33,17 @@ No test, typecheck, or build pass is claimed.
 ## Concerns / verification limits
 
 The focused and full Vitest suites, project typecheck, and build could not be executed because `pnpm` and local dependencies are unavailable in this environment. The newly added tests therefore remain unexecuted here. This limitation should be resolved by running the required commands in an environment with the project dependencies and pnpm installed.
+
+## Fix round 1 — durable recovery cancellation
+
+- Reviewed BASE: `9cb037f5ee3f1423696f54d0a0f62ca7d4f34ffa`. Worktree initially included only the report commit `3a8acb7de4c10f1135c218a2dff8b7736c8c2493` above that implementation; code changes below are based on the exact reviewed implementation.
+- Reproduction tests were added first: connected during a deferred `createOffer` (must neither send nor rebuild) and a valid answer during deferred `setLocalDescription` followed by rejection (must neither timeout nor rebuild). Both assert one original PeerConnection remains open; the connected case asserts it remains connected, and the answer case asserts the applied answer remains on that original peer.
+- Required pre-production red attempt, from the isolated worktree: `pnpm test -- tests/frontend/webRTC.test.ts` — exit 1, PowerShell `CommandNotFoundException` (`pnpm` is not recognized). The tests could not be run to observe their failure.
+- Production change adds a monotonically increasing recovery-attempt token. Clearing recovery invalidates it; both restart stages and the recovery continuation check peer identity, request generation, lock peer and token. These checks prevent a stale continuation from sending after cancellation, installing a new timeout, or falling back to rebuild. A failure event received during an in-flight attempt now sets `reconnectRequested` before the lock check, and the finishing attempt drains that queued request against the same peer.
+- Post-test focused attempt: `pnpm test -- tests/frontend/webRTC.test.ts` — exit 1, `pnpm` unavailable.
+- Focused lifecycle attempt: `pnpm test -- tests/frontend/webRTC.test.ts tests/frontend/webRTCStats.test.ts` — exit 1, `pnpm` unavailable.
+- Typecheck attempt: `pnpm typecheck` — exit 1, `pnpm` unavailable. Standalone `tsc --noEmit` — exit 1, `tsc` unavailable. No dependency installation attempted.
+- `git diff --check` — passed (exit 0; no output).
+- Runtime test/typecheck limitation remains: both regression tests and type validation are unexecuted. No pass is claimed; run them in a provisioned pnpm/dependency environment.
+- Fresh handoff review confirmed the attempt-token guards suppress stale offer sends, timer creation, and rebuilds after cancellation. Follow-up fix also guards the restart catch diagnostic, resets queued recovery on a valid answer, and restores the brief-required `restartIceAndRenegotiate(peerConnection): Promise<boolean>` signature. The valid-answer deferred-rejection test now asserts that no stale error diagnostic is written.
+- Follow-up verification: `git diff --check` — passed (exit 0); test commands remain unavailable because `pnpm` is not installed. No tests/typecheck/build pass is claimed.

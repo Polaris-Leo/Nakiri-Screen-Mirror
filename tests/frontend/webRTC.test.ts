@@ -8,6 +8,8 @@ import { useWebSocketStore } from "../../app/stores/webSocket";
 class FakePeerConnection {
 	static instances: FakePeerConnection[] = [];
 	static nextSetParametersGate: (() => Promise<void>) | null = null;
+	static nextCreateOfferGate: (() => Promise<RTCSessionDescriptionInit>) | null = null;
+	static nextSetLocalDescriptionGate: (() => Promise<void>) | null = null;
 	constructor(readonly configuration?: RTCConfiguration) {
 		FakePeerConnection.instances.push(this);
 	}
@@ -33,9 +35,17 @@ class FakePeerConnection {
 	setRemoteDescription = vi.fn(async (description: RTCSessionDescriptionInit) => {
 		this.remoteDescription = description;
 	});
-	setLocalDescription = vi.fn(async () => undefined);
+	setLocalDescription = vi.fn(async () => {
+		const gate = FakePeerConnection.nextSetLocalDescriptionGate;
+		FakePeerConnection.nextSetLocalDescriptionGate = null;
+		await gate?.();
+	});
 	createAnswer = vi.fn(async () => ({ type: "answer" as const, sdp: "answer" }));
-	createOffer = vi.fn(async (_options?: RTCOfferOptions) => ({ type: "offer" as const, sdp: "offer" }));
+	createOffer = vi.fn(async (_options?: RTCOfferOptions) => {
+		const gate = FakePeerConnection.nextCreateOfferGate;
+		FakePeerConnection.nextCreateOfferGate = null;
+		return gate ? gate() : ({ type: "offer" as const, sdp: "offer" });
+	});
 	addTrack = vi.fn((track: MediaStreamTrack) => {
 		const sender = {
 			track,
@@ -72,6 +82,8 @@ describe("WebRTCService lifecycle", () => {
 	beforeEach(() => {
 		FakePeerConnection.instances = [];
 		FakePeerConnection.nextSetParametersGate = null;
+		FakePeerConnection.nextCreateOfferGate = null;
+		FakePeerConnection.nextSetLocalDescriptionGate = null;
 		(globalThis as any).RTCPeerConnection = FakePeerConnection;
 		(globalThis as any).RTCIceCandidate = FakeIceCandidate;
 		(globalThis as any).RTCSessionDescription = FakeSessionDescription;
@@ -294,6 +306,59 @@ describe("WebRTCService lifecycle", () => {
 
 		expect(FakePeerConnection.instances).toHaveLength(2);
 		expect(FakePeerConnection.instances[1].addTrack).toHaveBeenCalledWith(track, expect.anything());
+	});
+
+	it("does not send or rebuild when connected cancels a pending createOffer", async () => {
+		vi.useFakeTimers();
+		let resolveOffer!: (offer: RTCSessionDescriptionInit) => void;
+		FakePeerConnection.nextCreateOfferGate = () => new Promise((resolve) => { resolveOffer = resolve; });
+		const track = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
+		webRTCService.setLocalStream({ getTracks: () => [track] } as unknown as MediaStream);
+		const sendMessage = vi.spyOn(webSocketService, "sendMessage").mockReturnValue(true);
+		const first = (await webRTCService.connect("123456")) as unknown as FakePeerConnection;
+		useWebSocketStore.setState({ webSocketState: "connected" });
+		first.connectionState = "failed";
+		first.onconnectionstatechange?.();
+		await Promise.resolve();
+
+		first.connectionState = "connected";
+		first.onconnectionstatechange?.();
+		resolveOffer({ type: "offer", sdp: "restart" });
+		await Promise.resolve();
+		await Promise.resolve();
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "offer" }));
+		expect(FakePeerConnection.instances).toHaveLength(1);
+		expect(first.close).not.toHaveBeenCalled();
+		expect(first.connectionState).toBe("connected");
+	});
+
+	it("does not rebuild when a valid answer cancels pending setLocalDescription", async () => {
+		vi.useFakeTimers();
+		let rejectLocalDescription!: (error: Error) => void;
+		FakePeerConnection.nextSetLocalDescriptionGate = () => new Promise<void>((_resolve, reject) => { rejectLocalDescription = reject; });
+		const track = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
+		webRTCService.setLocalStream({ getTracks: () => [track] } as unknown as MediaStream);
+		const sendMessage = vi.spyOn(webSocketService, "sendMessage").mockReturnValue(true);
+		const first = (await webRTCService.connect("123456")) as unknown as FakePeerConnection;
+		useWebSocketStore.setState({ webSocketState: "connected" });
+		first.connectionState = "failed";
+		first.onconnectionstatechange?.();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		await (webRTCService as any).handleAnswer({ type: "answer", sdp: "answer" });
+		rejectLocalDescription(new Error("late local-description failure"));
+		await Promise.resolve();
+		await Promise.resolve();
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "offer" }));
+		expect(FakePeerConnection.instances).toHaveLength(1);
+		expect(first.close).not.toHaveBeenCalled();
+		expect(first.remoteDescription).toEqual({ type: "answer", sdp: "answer" });
+		expect(useWebRTCStore.getState().lastError).toBeNull();
 	});
 
 	it("rebuilds after an ICE restart answer timeout and cancels it on a valid answer", async () => {
