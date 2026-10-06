@@ -17,6 +17,10 @@ describe("Docker TURN relay configuration", () => {
 		expect(compose).toMatch(/secrets:\s*\n\s*turn_secret:\s*\n\s*file:\s*\$\{TURN_SECRET_FILE:\?Set TURN_SECRET_FILE to the host secret file path\}/);
 	});
 
+	it("passes the documented TURN credential TTL through with a 3600-second default", () => {
+		expect(compose).toMatch(/TURN_CREDENTIAL_TTL_SECONDS:\s*\$\{TURN_CREDENTIAL_TTL_SECONDS:-3600\}/);
+	});
+
 	it("publishes direct TURN listeners and the bounded relay range", () => {
 		expect(compose).toMatch(/3478:3478\/udp/);
 		expect(compose).toMatch(/3478:3478\/tcp/);

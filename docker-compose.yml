@@ -12,7 +12,7 @@ services:
       HOST: "0.0.0.0"
       TURN_SECRET_FILE: /run/secrets/turn_secret
       TURN_URLS: ${TURN_URLS:?Set TURN_URLS in .env}
-      TURN_CREDENTIAL_TTL_SECONDS: "3600"
+      TURN_CREDENTIAL_TTL_SECONDS: ${TURN_CREDENTIAL_TTL_SECONDS:-3600}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://mirror.example.com}
       TRUST_PROXY: ${TRUST_PROXY:-false}
     secrets:

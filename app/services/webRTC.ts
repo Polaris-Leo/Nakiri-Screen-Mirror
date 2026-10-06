@@ -372,6 +372,7 @@ class WebRTCService {
 			if (isCurrentAttempt()) this.rebuildSenderConnection(peerConnection, requestGeneration, peerId);
 		} finally {
 			this.recovering = false;
+			if (this.reconnectRequested) void this.recoverSenderConnection();
 		}
 	}
 
