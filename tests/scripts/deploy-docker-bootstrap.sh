@@ -14,7 +14,14 @@ make_fixture() {
 set -Eeuo pipefail
 printf '%s\n' "$*" >> "$DOCKER_CALL_LOG"
 case "$*" in
-  "info"|"compose version"|"compose config --quiet"|"compose up -d --build --remove-orphans"|"compose ps") exit 0 ;;
+  "info"|"compose version"|"compose up -d --build --remove-orphans"|"compose ps") exit 0 ;;
+  "compose config --quiet")
+    if [[ "${CHECK_SECRET_MODES:-0}" == 1 ]]; then
+      [[ "$(stat -c '%a' "$CONFIG_CHECK_ROOT/secrets")" == 700 ]] || { printf '%s\n' 'FAIL: secrets directory mode was not 700 at Compose config time' >&2; exit 1; }
+      [[ "$(stat -c '%a' "$CONFIG_CHECK_ROOT/secrets/turn_secret")" == 600 ]] || { printf '%s\n' 'FAIL: secret file mode was not 600 at Compose config time' >&2; exit 1; }
+    fi
+    exit 0
+    ;;
   *) exit 99 ;;
 esac
 EOF
@@ -74,18 +81,76 @@ up_line="$(grep -nFx 'compose up -d --build --remove-orphans' "$success/docker.l
 [[ -n "$config_line" && -n "$up_line" && "$config_line" -lt "$up_line" ]] || { printf 'FAIL: Compose config must precede up\n' >&2; exit 1; }
 cp "$success/.env" "$success/.env.expected"
 cp "$success/secrets/turn_secret" "$success/secret.expected"
+chmod 755 "$success/secrets"
+chmod 644 "$success/secrets/turn_secret"
 if ! (
   cd "$success"
   PATH="$success/bin:$PATH" DOCKER_CALL_LOG="$success/docker.log" \
+    CONFIG_CHECK_ROOT="$success" CHECK_SECRET_MODES=1 \
     TURN_EXTERNAL_IP=198.51.100.25 TURN_REALM=turn.example.net \
     ALLOWED_ORIGINS=https://mirror.example.net WSS_URL= \
-    bash scripts/deploy-docker.sh >/dev/null 2>&1
+    bash scripts/deploy-docker.sh
 ); then
-  printf 'FAIL: second deployment should pass\n' >&2
+  printf 'FAIL: existing-configuration deployment should tighten secret modes before Compose config\n' >&2
   exit 1
 fi
-cmp -s "$success/.env.expected" "$success/.env" || { printf 'FAIL: second run changed .env\n' >&2; exit 1; }
-cmp -s "$success/secret.expected" "$success/secrets/turn_secret" || { printf 'FAIL: second run changed secret\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$success/secrets")" == 700 ]] || { printf 'FAIL: existing secrets directory mode is not 700\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$success/secrets/turn_secret")" == 600 ]] || { printf 'FAIL: existing secret file mode is not 600\n' >&2; exit 1; }
+cmp -s "$success/.env.expected" "$success/.env" || { printf 'FAIL: existing-configuration run changed .env bytes\n' >&2; exit 1; }
+cmp -s "$success/secret.expected" "$success/secrets/turn_secret" || { printf 'FAIL: existing-configuration run changed secret bytes\n' >&2; exit 1; }
+
+symlink_secret="$fixture/symlink-secret"
+make_fixture "$symlink_secret"
+mkdir -p "$symlink_secret/secrets"
+printf '%s\n' 'external-test-secret' > "$fixture/external-secret"
+chmod 644 "$fixture/external-secret"
+ln -s "$fixture/external-secret" "$symlink_secret/secrets/turn_secret"
+cat > "$symlink_secret/.env" <<'EOF'
+TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+ALLOWED_ORIGINS=https://mirror.example.net
+EOF
+if (cd "$symlink_secret" && PATH="$symlink_secret/bin:$PATH" DOCKER_CALL_LOG="$symlink_secret/docker.log" WSS_URL= bash scripts/deploy-docker.sh >/dev/null 2>"$symlink_secret/error.log"); then
+  printf 'FAIL: an existing symlink secret should be rejected\n' >&2
+  exit 1
+fi
+grep -Fq '符号链接' "$symlink_secret/error.log" || { printf 'FAIL: symlink rejection should explain the unsafe path\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$symlink_secret/secrets")" == 755 ]] || { printf 'FAIL: symlink rejection changed directory mode\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$fixture/external-secret")" == 644 ]] || { printf 'FAIL: symlink rejection changed external file mode\n' >&2; exit 1; }
+[[ "$(<"$fixture/external-secret")" == 'external-test-secret' ]] || { printf 'FAIL: symlink rejection changed external file bytes\n' >&2; exit 1; }
+assert_no_up "$symlink_secret/docker.log"
+if grep -Fxq 'compose config --quiet' "$symlink_secret/docker.log"; then
+  printf 'FAIL: symlink rejection reached Compose config\n' >&2
+  exit 1
+fi
+
+permission_failure="$fixture/permission-failure"
+make_fixture "$permission_failure"
+mkdir -p "$permission_failure/secrets"
+printf '%s\n' 'permission-failure-test-secret' > "$permission_failure/secrets/turn_secret"
+printf '%s\n' 'fixture-only-config=1' > "$permission_failure/.env"
+chmod 755 "$permission_failure/secrets"
+chmod 644 "$permission_failure/secrets/turn_secret"
+cat > "$permission_failure/bin/chmod" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${FAIL_PERMISSION_CHANGE:-0}" == 1 ]]; then
+  printf '%s\n' 'simulated chmod failure' >&2
+  exit 1
+fi
+exec /usr/bin/chmod "$@"
+EOF
+chmod +x "$permission_failure/bin/chmod"
+if (cd "$permission_failure" && PATH="$permission_failure/bin:$PATH" FAIL_PERMISSION_CHANGE=1 DOCKER_CALL_LOG="$permission_failure/docker.log" WSS_URL= bash scripts/deploy-docker.sh >"$permission_failure/output.log" 2>&1); then
+  printf 'FAIL: a secrets permission failure should abort deployment\n' >&2
+  exit 1
+fi
+grep -Fq '无法设置 secrets 目录权限' "$permission_failure/output.log" || { printf 'FAIL: permission failure should provide a useful error\n' >&2; exit 1; }
+if grep -Fxq 'compose config --quiet' "$permission_failure/docker.log"; then
+  printf 'FAIL: permission failure reached Compose config\n' >&2
+  exit 1
+fi
+assert_no_up "$permission_failure/docker.log"
 
 missing="$fixture/missing"
 make_fixture "$missing"

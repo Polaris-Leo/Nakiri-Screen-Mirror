@@ -30,8 +30,36 @@ resolve_value() {
   printf -v "$variable" '%s' "$value"
 }
 
+secure_existing_secret_paths() {
+  local secrets_dir="$PROJECT_ROOT/secrets"
+
+  if [[ -L "$secrets_dir" ]]; then
+    setup_error 'secrets 目录是符号链接；为避免修改外部路径，已停止。'
+  fi
+  [[ -e "$secrets_dir" ]] || return 0
+  [[ -d "$secrets_dir" ]] || setup_error 'secrets 路径不是目录，无法安全设置权限。'
+
+  if [[ -L "$SECRET_FILE" ]]; then
+    setup_error 'secrets/turn_secret 是符号链接；为避免修改外部路径，已停止。'
+  fi
+  if [[ -e "$SECRET_FILE" ]]; then
+    [[ -f "$SECRET_FILE" ]] || setup_error 'secrets/turn_secret 不是普通文件，无法安全设置权限。'
+    local secret_links
+    secret_links="$(stat -c '%h' -- "$SECRET_FILE")" || setup_error '无法检查 secrets/turn_secret 的硬链接状态。'
+    [[ "$secret_links" == 1 ]] || setup_error 'secrets/turn_secret 有多个硬链接；为避免修改外部路径，已停止。'
+  fi
+
+  chmod 700 "$secrets_dir" || setup_error '无法设置 secrets 目录权限。'
+  if [[ -e "$SECRET_FILE" ]]; then
+    chmod 600 "$SECRET_FILE" || setup_error '无法设置 secrets/turn_secret 权限。'
+  fi
+}
+
 bootstrap_env() {
-  [[ -e "$ENV_FILE" ]] && return 0
+  if [[ -e "$ENV_FILE" ]]; then
+    secure_existing_secret_paths
+    return 0
+  fi
 
   resolve_value TURN_EXTERNAL_IP '请输入 TURN 主机公网 IP：'
   resolve_value TURN_REALM '请输入 TURN Realm：'
