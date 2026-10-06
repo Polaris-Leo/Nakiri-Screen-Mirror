@@ -101,15 +101,12 @@ assert_preflight_failure 'failing docker compose version'
 reset_case
 mkdir -p "$FIXTURE/no-docker-bin"
 cp "$FIXTURE/bin/git" "$FIXTURE/no-docker-bin/git"
-cat > "$FIXTURE/no-docker-bin/bash" <<'FAKE_BASH'
-#!/usr/bin/env bash
-exec /bin/bash "$@"
-FAKE_BASH
+ln -s /bin/bash "$FIXTURE/no-docker-bin/bash"
 cat > "$FIXTURE/no-docker-bin/dirname" <<'FAKE_DIRNAME'
 #!/usr/bin/env bash
 exec /usr/bin/dirname "$@"
 FAKE_DIRNAME
-chmod +x "$FIXTURE/no-docker-bin/git" "$FIXTURE/no-docker-bin/bash" "$FIXTURE/no-docker-bin/dirname"
+chmod +x "$FIXTURE/no-docker-bin/git" "$FIXTURE/no-docker-bin/dirname"
 PATH="$FIXTURE/no-docker-bin" run_upgrade >/dev/null 2>&1 && fail 'missing Docker CLI should be rejected'
 assert_preflight_failure 'missing Docker CLI'
 
