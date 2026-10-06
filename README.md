@@ -9,6 +9,11 @@
 - 服务端按需签发短期 TURN 凭据；长期共享密钥仅保存在 Docker 主机的 file-backed Secret。
 - 屏幕采集质量选项、连接诊断与信令重连。
 
+## 参考调研
+
+- 本地 WebRTC / NAT 穿透项目比较与 A→B→C 路线：[调研报告](docs/WEBRTC-REFERENCE-RESEARCH.md)
+- 当前生产部署流程：[Docker + EdgeOne 部署指南](docs/DEPLOYMENT.md)
+
 ## 部署
 
 唯一支持的生产部署路径是 Docker + EdgeOne：EdgeOne Pages 发布静态前端，EdgeOne 将 WSS `/connect` 与不缓存的 HTTPS `/api/turn-credentials` 代理到 Docker Node 服务；TURN 媒体由浏览器直接连接 coturn，不经过 EdgeOne。
