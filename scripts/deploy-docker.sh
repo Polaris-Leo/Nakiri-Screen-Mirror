@@ -62,6 +62,47 @@ secure_existing_secret_paths() {
   fi
 }
 
+# Read a Compose .env assignment as plain data; never source or evaluate it.
+read_dotenv_value() {
+  local key="$1"
+  DOTENV_VALUE="$(awk -v key="$key" '
+    {
+      line = $0
+      sub(/\\r$/, "", line)
+      if (line ~ /^[[:space:]]*#/ || line ~ /^[[:space:]]*$/) next
+      equals = index(line, "=")
+      if (!equals) next
+      name = substr(line, 1, equals - 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      if (name != key) next
+      value = substr(line, equals + 1)
+      sub(/[[:space:]]+#.*$/, "", value)
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (length(value) >= 2 && ((substr(value, 1, 1) == "\"" && substr(value, length(value), 1) == "\"") || (substr(value, 1, 1) == "\047" && substr(value, length(value), 1) == "\047"))) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      found = 1
+    }
+    END { if (found) print value }
+  ' "$ENV_FILE")"
+}
+
+validate_existing_env() {
+  local key
+  for key in TURN_SECRET_FILE TURN_EXTERNAL_IP TURN_REALM TURN_URLS ALLOWED_ORIGINS; do
+    read_dotenv_value "$key"
+    if [[ -z "${DOTENV_VALUE//[[:space:]]/}" ]]; then
+      setup_error ".env 中的 $key 必须是非空值；服务尚未更改。"
+    fi
+  done
+
+  read_dotenv_value TURN_SECRET_FILE
+  [[ "$DOTENV_VALUE" == './secrets/turn_secret' ]] || setup_error '.env 中 TURN_SECRET_FILE 必须为 ./secrets/turn_secret。'
+  read_dotenv_value TURN_URLS
+  [[ "$DOTENV_VALUE" != *turn.example.com* ]] || setup_error '.env 中 TURN_URLS 仍包含 .env.example 示例主机名。'
+}
+
 bootstrap_env() {
   if [[ -e "$ENV_FILE" ]]; then
     secure_existing_secret_paths 1
@@ -138,6 +179,7 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 bootstrap_env
+validate_existing_env
 
 if grep -Eq '^[[:space:]]*TURN_EXTERNAL_IP[[:space:]]*=[[:space:]]*"?203\.0\.113\.10"?[[:space:]]*(#.*)?$' "$ENV_FILE" \
   || grep -Eq '^[[:space:]]*TURN_REALM[[:space:]]*=[[:space:]]*"?turn\.example\.com"?[[:space:]]*(#.*)?$' "$ENV_FILE" \

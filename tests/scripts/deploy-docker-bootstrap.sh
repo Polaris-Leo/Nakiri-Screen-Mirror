@@ -302,4 +302,71 @@ grep -Fq '硬链接' "$bootstrap_hardlink/error.log" || { printf 'FAIL: hardlink
 [[ "$(<"$fixture/external-hardlink-secret")" == 'external-hardlink-secret' ]] || { printf 'FAIL: first-run hardlink rejection changed external bytes\n' >&2; exit 1; }
 assert_no_up "$bootstrap_hardlink/docker.log"
 
+# Existing .env files are data, not shell code: required compose inputs must
+# be present and nonblank before even `docker compose config` is invoked.
+make_existing_env_case() {
+  local name="$1"
+  local content="$2"
+  local root="$fixture/existing-$name"
+  make_fixture "$root"
+  mkdir -p "$root/secrets"
+  printf '%s\n' 'fixture-secret-bytes' > "$root/secrets/turn_secret"
+  printf '%s' "$content" > "$root/.env"
+  cp "$root/.env" "$root/.env.expected"
+  cp "$root/secrets/turn_secret" "$root/secret.expected"
+  if (cd "$root" && PATH="$root/bin:$PATH" DOCKER_CALL_LOG="$root/docker.log" WSS_URL= bash scripts/deploy-docker.sh >"$root/output.log" 2>&1); then
+    printf 'FAIL: invalid existing .env case %s should be rejected\n' "$name" >&2
+    exit 1
+  fi
+  if grep -Eq '^compose (config --quiet|up )' "$root/docker.log" 2>/dev/null; then
+    printf 'FAIL: invalid existing .env case %s reached Compose config/up\n' "$name" >&2
+    exit 1
+  fi
+  cmp -s "$root/.env.expected" "$root/.env" || { printf 'FAIL: invalid case %s changed .env bytes\n' "$name" >&2; exit 1; }
+  cmp -s "$root/secret.expected" "$root/secrets/turn_secret" || { printf 'FAIL: invalid case %s changed secret bytes\n' "$name" >&2; exit 1; }
+}
+
+valid_required_env='TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+TURN_URLS=turn:turn.example.net:3478?transport=udp
+ALLOWED_ORIGINS=https://mirror.example.net
+'
+make_existing_env_case missing-allowed-origins "${valid_required_env%ALLOWED_ORIGINS=*}"
+make_existing_env_case blank-allowed-origins 'TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+TURN_URLS=turn:turn.example.net:3478?transport=udp
+ALLOWED_ORIGINS=
+'
+make_existing_env_case missing-turn-urls 'TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+ALLOWED_ORIGINS=https://mirror.example.net
+'
+make_existing_env_case blank-turn-urls 'TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+TURN_URLS=
+ALLOWED_ORIGINS=https://mirror.example.net
+'
+make_existing_env_case mismatched-secret-path "${valid_required_env/\/secrets\/turn_secret/\/tmp\/other-secret}"
+make_existing_env_case stale-turn-urls "${valid_required_env/turn:turn.example.net:3478?transport=udp/turn:turn.example.com:3478?transport=udp}"
+
+optional_defaults="$fixture/existing-optional-defaults"
+make_fixture "$optional_defaults"
+mkdir -p "$optional_defaults/secrets"
+printf '%s\n' 'fixture-secret-bytes' > "$optional_defaults/secrets/turn_secret"
+printf '%s' "$valid_required_env" > "$optional_defaults/.env"
+if ! (cd "$optional_defaults" && PATH="$optional_defaults/bin:$PATH" DOCKER_CALL_LOG="$optional_defaults/docker.log" WSS_URL= bash scripts/deploy-docker.sh >"$optional_defaults/output.log" 2>&1); then
+  printf 'FAIL: valid existing config should accept omitted optional TTL/TRUST_PROXY defaults\n' >&2
+  exit 1
+fi
+if grep -Eq '^(TURN_CREDENTIAL_TTL_SECONDS|TRUST_PROXY)=' "$optional_defaults/.env"; then
+  printf 'FAIL: validating existing .env should not rewrite optional defaults into it\n' >&2
+  exit 1
+fi
+grep -Fxq 'compose config --quiet' "$optional_defaults/docker.log" || { printf 'FAIL: valid config did not reach Compose config\n' >&2; exit 1; }
+grep -Fxq 'compose up -d --build --remove-orphans' "$optional_defaults/docker.log" || { printf 'FAIL: valid config did not deploy\n' >&2; exit 1; }
+
 printf '%s\n' 'PASS: deploy Docker bootstrap regression harness'
