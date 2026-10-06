@@ -31,12 +31,17 @@ resolve_value() {
 }
 
 secure_existing_secret_paths() {
+  local require_secret="${1:-0}"
   local secrets_dir="$PROJECT_ROOT/secrets"
+  local secret_links
 
   if [[ -L "$secrets_dir" ]]; then
     setup_error 'secrets 目录是符号链接；为避免修改外部路径，已停止。'
   fi
-  [[ -e "$secrets_dir" ]] || return 0
+  if [[ ! -e "$secrets_dir" ]]; then
+    [[ "$require_secret" == 0 ]] || setup_error 'secrets 目录不存在；请按 docs/DEPLOYMENT.md 第 3 节手动准备 secrets/turn_secret。'
+    return 0
+  fi
   [[ -d "$secrets_dir" ]] || setup_error 'secrets 路径不是目录，无法安全设置权限。'
 
   if [[ -L "$SECRET_FILE" ]]; then
@@ -44,9 +49,11 @@ secure_existing_secret_paths() {
   fi
   if [[ -e "$SECRET_FILE" ]]; then
     [[ -f "$SECRET_FILE" ]] || setup_error 'secrets/turn_secret 不是普通文件，无法安全设置权限。'
-    local secret_links
     secret_links="$(stat -c '%h' -- "$SECRET_FILE")" || setup_error '无法检查 secrets/turn_secret 的硬链接状态。'
     [[ "$secret_links" == 1 ]] || setup_error 'secrets/turn_secret 有多个硬链接；为避免修改外部路径，已停止。'
+    [[ -s "$SECRET_FILE" ]] || setup_error 'secrets/turn_secret 为空；请按 docs/DEPLOYMENT.md 第 3 节手动准备非空 Secret。'
+  elif [[ "$require_secret" == 1 ]]; then
+    setup_error 'secrets/turn_secret 不存在；现有 .env 不会自动生成或替换 Secret，请按 docs/DEPLOYMENT.md 第 3 节手动准备。'
   fi
 
   chmod 700 "$secrets_dir" || setup_error '无法设置 secrets 目录权限。'
@@ -57,7 +64,7 @@ secure_existing_secret_paths() {
 
 bootstrap_env() {
   if [[ -e "$ENV_FILE" ]]; then
-    secure_existing_secret_paths
+    secure_existing_secret_paths 1
     return 0
   fi
 
@@ -77,11 +84,11 @@ bootstrap_env() {
   done
 
   umask 077
+  secure_existing_secret_paths
   mkdir -p "$PROJECT_ROOT/secrets"
-  chmod 700 "$PROJECT_ROOT/secrets"
+  secure_existing_secret_paths
   if [[ -e "$SECRET_FILE" ]]; then
     [[ -s "$SECRET_FILE" ]] || setup_error 'secrets/turn_secret 已存在但为空，未作修改。'
-    chmod 600 "$SECRET_FILE"
   else
     if ! (set -o noclobber; openssl rand -hex 32 > "$SECRET_FILE") 2>/dev/null; then
       setup_error '无法创建 secrets/turn_secret。'

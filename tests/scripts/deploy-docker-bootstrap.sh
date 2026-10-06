@@ -189,4 +189,117 @@ fi
 [[ ! -s "$empty_secret/secrets/turn_secret" ]] || { printf 'FAIL: empty secret file was modified\n' >&2; exit 1; }
 assert_no_up "$empty_secret/docker.log"
 
+existing_missing_dir="$fixture/existing-missing-dir"
+make_fixture "$existing_missing_dir"
+cat > "$existing_missing_dir/.env" <<'EOF'
+TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+ALLOWED_ORIGINS=https://mirror.example.net
+EOF
+if (cd "$existing_missing_dir" && PATH="$existing_missing_dir/bin:$PATH" DOCKER_CALL_LOG="$existing_missing_dir/docker.log" WSS_URL= bash scripts/deploy-docker.sh >/dev/null 2>"$existing_missing_dir/error.log"); then
+  printf 'FAIL: existing .env without secrets directory should be rejected\n' >&2
+  exit 1
+fi
+grep -Fq 'secrets' "$existing_missing_dir/error.log" || { printf 'FAIL: missing directory should give setup guidance\n' >&2; exit 1; }
+[[ ! -e "$existing_missing_dir/secrets" ]] || { printf 'FAIL: existing .env run created a secrets directory\n' >&2; exit 1; }
+assert_no_up "$existing_missing_dir/docker.log"
+if grep -Fxq 'compose config --quiet' "$existing_missing_dir/docker.log"; then
+  printf 'FAIL: missing directory reached Compose config\n' >&2
+  exit 1
+fi
+
+existing_missing_secret="$fixture/existing-missing-secret"
+make_fixture "$existing_missing_secret"
+mkdir -p "$existing_missing_secret/secrets"
+cat > "$existing_missing_secret/.env" <<'EOF'
+TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+ALLOWED_ORIGINS=https://mirror.example.net
+EOF
+if (cd "$existing_missing_secret" && PATH="$existing_missing_secret/bin:$PATH" DOCKER_CALL_LOG="$existing_missing_secret/docker.log" WSS_URL= bash scripts/deploy-docker.sh >/dev/null 2>"$existing_missing_secret/error.log"); then
+  printf 'FAIL: existing .env without secret file should be rejected\n' >&2
+  exit 1
+fi
+grep -Fq 'turn_secret' "$existing_missing_secret/error.log" || { printf 'FAIL: missing secret should give setup guidance\n' >&2; exit 1; }
+[[ ! -e "$existing_missing_secret/secrets/turn_secret" ]] || { printf 'FAIL: existing .env run generated a secret\n' >&2; exit 1; }
+assert_no_up "$existing_missing_secret/docker.log"
+if grep -Fxq 'compose config --quiet' "$existing_missing_secret/docker.log"; then
+  printf 'FAIL: missing secret reached Compose config\n' >&2
+  exit 1
+fi
+
+existing_empty_secret="$fixture/existing-empty-secret"
+make_fixture "$existing_empty_secret"
+mkdir -p "$existing_empty_secret/secrets"
+: > "$existing_empty_secret/secrets/turn_secret"
+cat > "$existing_empty_secret/.env" <<'EOF'
+TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+ALLOWED_ORIGINS=https://mirror.example.net
+EOF
+if (cd "$existing_empty_secret" && PATH="$existing_empty_secret/bin:$PATH" DOCKER_CALL_LOG="$existing_empty_secret/docker.log" WSS_URL= bash scripts/deploy-docker.sh >/dev/null 2>"$existing_empty_secret/error.log"); then
+  printf 'FAIL: existing .env with empty secret should be rejected\n' >&2
+  exit 1
+fi
+grep -Fq 'turn_secret' "$existing_empty_secret/error.log" || { printf 'FAIL: empty secret should give setup guidance\n' >&2; exit 1; }
+[[ ! -s "$existing_empty_secret/secrets/turn_secret" ]] || { printf 'FAIL: empty secret file was modified\n' >&2; exit 1; }
+assert_no_up "$existing_empty_secret/docker.log"
+if grep -Fxq 'compose config --quiet' "$existing_empty_secret/docker.log"; then
+  printf 'FAIL: empty secret reached Compose config\n' >&2
+  exit 1
+fi
+
+bootstrap_symlink="$fixture/bootstrap-symlink"
+make_fixture "$bootstrap_symlink"
+mkdir -p "$bootstrap_symlink/secrets"
+printf '%s\n' 'external-bootstrap-secret' > "$fixture/external-bootstrap-secret"
+chmod 644 "$fixture/external-bootstrap-secret"
+ln -s "$fixture/external-bootstrap-secret" "$bootstrap_symlink/secrets/turn_secret"
+if (cd "$bootstrap_symlink" && PATH="$bootstrap_symlink/bin:$PATH" DOCKER_CALL_LOG="$bootstrap_symlink/docker.log" TURN_EXTERNAL_IP=198.51.100.25 TURN_REALM=turn.example.net ALLOWED_ORIGINS=https://mirror.example.net WSS_URL= bash scripts/deploy-docker.sh >/dev/null 2>"$bootstrap_symlink/error.log"); then
+  printf 'FAIL: first-run symlink secret should be rejected\n' >&2
+  exit 1
+fi
+grep -Fq '符号链接' "$bootstrap_symlink/error.log" || { printf 'FAIL: first-run symlink rejection should identify unsafe path\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$fixture/external-bootstrap-secret")" == 644 ]] || { printf 'FAIL: first-run symlink rejection changed external mode\n' >&2; exit 1; }
+[[ "$(<"$fixture/external-bootstrap-secret")" == 'external-bootstrap-secret' ]] || { printf 'FAIL: first-run symlink rejection changed external bytes\n' >&2; exit 1; }
+assert_no_up "$bootstrap_symlink/docker.log"
+if grep -Fxq 'compose config --quiet' "$bootstrap_symlink/docker.log"; then
+  printf 'FAIL: first-run symlink rejection reached Compose config\n' >&2
+  exit 1
+fi
+
+bootstrap_symlink_dir="$fixture/bootstrap-symlink-dir"
+make_fixture "$bootstrap_symlink_dir"
+mkdir -p "$fixture/external-secrets-dir"
+printf '%s\n' 'external-dir-secret' > "$fixture/external-secrets-dir/turn_secret"
+chmod 711 "$fixture/external-secrets-dir"
+chmod 644 "$fixture/external-secrets-dir/turn_secret"
+ln -s "$fixture/external-secrets-dir" "$bootstrap_symlink_dir/secrets"
+if (cd "$bootstrap_symlink_dir" && PATH="$bootstrap_symlink_dir/bin:$PATH" DOCKER_CALL_LOG="$bootstrap_symlink_dir/docker.log" TURN_EXTERNAL_IP=198.51.100.25 TURN_REALM=turn.example.net ALLOWED_ORIGINS=https://mirror.example.net WSS_URL= bash scripts/deploy-docker.sh >/dev/null 2>"$bootstrap_symlink_dir/error.log"); then
+  printf 'FAIL: first-run symlink secrets directory should be rejected\n' >&2
+  exit 1
+fi
+grep -Fq '符号链接' "$bootstrap_symlink_dir/error.log" || { printf 'FAIL: symlink directory rejection should identify unsafe path\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$fixture/external-secrets-dir")" == 711 ]] || { printf 'FAIL: symlink directory rejection changed external directory mode\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$fixture/external-secrets-dir/turn_secret")" == 644 ]] || { printf 'FAIL: symlink directory rejection changed external file mode\n' >&2; exit 1; }
+assert_no_up "$bootstrap_symlink_dir/docker.log"
+
+bootstrap_hardlink="$fixture/bootstrap-hardlink"
+make_fixture "$bootstrap_hardlink"
+mkdir -p "$bootstrap_hardlink/secrets"
+printf '%s\n' 'external-hardlink-secret' > "$fixture/external-hardlink-secret"
+chmod 644 "$fixture/external-hardlink-secret"
+ln "$fixture/external-hardlink-secret" "$bootstrap_hardlink/secrets/turn_secret"
+if (cd "$bootstrap_hardlink" && PATH="$bootstrap_hardlink/bin:$PATH" DOCKER_CALL_LOG="$bootstrap_hardlink/docker.log" TURN_EXTERNAL_IP=198.51.100.25 TURN_REALM=turn.example.net ALLOWED_ORIGINS=https://mirror.example.net WSS_URL= bash scripts/deploy-docker.sh >/dev/null 2>"$bootstrap_hardlink/error.log"); then
+  printf 'FAIL: first-run hardlink secret should be rejected\n' >&2
+  exit 1
+fi
+grep -Fq '硬链接' "$bootstrap_hardlink/error.log" || { printf 'FAIL: hardlink rejection should identify unsafe path\n' >&2; exit 1; }
+[[ "$(stat -c '%a' "$fixture/external-hardlink-secret")" == 644 ]] || { printf 'FAIL: first-run hardlink rejection changed external mode\n' >&2; exit 1; }
+[[ "$(<"$fixture/external-hardlink-secret")" == 'external-hardlink-secret' ]] || { printf 'FAIL: first-run hardlink rejection changed external bytes\n' >&2; exit 1; }
+assert_no_up "$bootstrap_hardlink/docker.log"
+
 printf '%s\n' 'PASS: deploy Docker bootstrap regression harness'
