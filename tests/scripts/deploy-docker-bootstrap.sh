@@ -99,6 +99,33 @@ fi
 cmp -s "$success/.env.expected" "$success/.env" || { printf 'FAIL: existing-configuration run changed .env bytes\n' >&2; exit 1; }
 cmp -s "$success/secret.expected" "$success/secrets/turn_secret" || { printf 'FAIL: existing-configuration run changed secret bytes\n' >&2; exit 1; }
 
+interpolated_env="$fixture/interpolated-env"
+make_fixture "$interpolated_env"
+mkdir -p "$interpolated_env/secrets"
+printf '%s\n' 'interpolation-test-secret' > "$interpolated_env/secrets/turn_secret"
+cat > "$interpolated_env/.env" <<'EOF'
+TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=${EXAMPLE_REALM}
+TURN_URLS=turn:${EXAMPLE_REALM}:3478?transport=udp
+ALLOWED_ORIGINS=https://mirror.example.net
+EOF
+if (
+  cd "$interpolated_env"
+  PATH="$interpolated_env/bin:$PATH" DOCKER_CALL_LOG="$interpolated_env/docker.log" \
+    EXAMPLE_REALM=turn.example.com WSS_URL= \
+    bash scripts/deploy-docker.sh >"$interpolated_env/output.log" 2>&1
+); then
+  printf 'FAIL: interpolated required .env values should be rejected\n' >&2
+  exit 1
+fi
+grep -Fq 'Docker Compose 变量插值' "$interpolated_env/output.log" || { printf 'FAIL: interpolation rejection should explain the unsafe value\n' >&2; exit 1; }
+assert_no_up "$interpolated_env/docker.log"
+if grep -Fxq 'compose config --quiet' "$interpolated_env/docker.log"; then
+  printf 'FAIL: interpolation rejection reached Compose config\n' >&2
+  exit 1
+fi
+
 symlink_secret="$fixture/symlink-secret"
 make_fixture "$symlink_secret"
 mkdir -p "$symlink_secret/secrets"

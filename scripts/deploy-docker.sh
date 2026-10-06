@@ -95,6 +95,9 @@ validate_existing_env() {
     if [[ -z "${DOTENV_VALUE//[[:space:]]/}" ]]; then
       setup_error ".env 中的 $key 必须是非空值；服务尚未更改。"
     fi
+    if [[ "$DOTENV_VALUE" == *'$'* ]]; then
+      setup_error ".env 中的 $key 不得包含美元符号，以避免 Docker Compose 变量插值；服务尚未更改。"
+    fi
   done
 
   read_dotenv_value TURN_SECRET_FILE
