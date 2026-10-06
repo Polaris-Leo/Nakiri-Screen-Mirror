@@ -352,6 +352,36 @@ ALLOWED_ORIGINS=https://mirror.example.net
 '
 make_existing_env_case mismatched-secret-path "${valid_required_env/\/secrets\/turn_secret/\/tmp\/other-secret}"
 make_existing_env_case stale-turn-urls "${valid_required_env/turn:turn.example.net:3478?transport=udp/turn:turn.example.com:3478?transport=udp}"
+make_existing_env_case single-quoted-external-ip 'TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP='"'"'203.0.113.10'"'"'
+TURN_REALM=turn.example.net
+TURN_URLS=turn:turn.example.net:3478?transport=udp
+ALLOWED_ORIGINS=https://mirror.example.net
+'
+make_existing_env_case single-quoted-turn-realm 'TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM='"'"'turn.example.com'"'"'
+TURN_URLS=turn:turn.example.net:3478?transport=udp
+ALLOWED_ORIGINS=https://mirror.example.net
+'
+make_existing_env_case single-quoted-allowed-origin 'TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+TURN_URLS=turn:turn.example.net:3478?transport=udp
+ALLOWED_ORIGINS='"'"'https://mirror.example.com'"'"'
+'
+make_existing_env_case quoted-empty-allowed-origins 'TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+TURN_URLS=turn:turn.example.net:3478?transport=udp
+ALLOWED_ORIGINS=""
+'
+make_existing_env_case commented-allowed-origins 'TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.example.net
+TURN_URLS=turn:turn.example.net:3478?transport=udp
+# ALLOWED_ORIGINS=https://mirror.example.net
+'
 
 optional_defaults="$fixture/existing-optional-defaults"
 make_fixture "$optional_defaults"

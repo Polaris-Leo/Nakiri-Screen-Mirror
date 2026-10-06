@@ -101,6 +101,13 @@ validate_existing_env() {
   [[ "$DOTENV_VALUE" == './secrets/turn_secret' ]] || setup_error '.env 中 TURN_SECRET_FILE 必须为 ./secrets/turn_secret。'
   read_dotenv_value TURN_URLS
   [[ "$DOTENV_VALUE" != *turn.example.com* ]] || setup_error '.env 中 TURN_URLS 仍包含 .env.example 示例主机名。'
+
+  read_dotenv_value TURN_EXTERNAL_IP
+  [[ "$DOTENV_VALUE" != '203.0.113.10' ]] || setup_error '.env 仍包含 .env.example 示例值，请替换为真实配置。'
+  read_dotenv_value TURN_REALM
+  [[ "$DOTENV_VALUE" != 'turn.example.com' ]] || setup_error '.env 仍包含 .env.example 示例值，请替换为真实配置。'
+  read_dotenv_value ALLOWED_ORIGINS
+  [[ "$DOTENV_VALUE" != 'https://mirror.example.com' ]] || setup_error '.env 仍包含 .env.example 示例值，请替换为真实配置。'
 }
 
 bootstrap_env() {
