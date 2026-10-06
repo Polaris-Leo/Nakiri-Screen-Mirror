@@ -14,7 +14,13 @@ FIXTURE="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE"' EXIT
 mkdir -p "$FIXTURE/scripts" "$FIXTURE/bin" "$FIXTURE/secrets"
 cp "$UPGRADE_SCRIPT" "$DEPLOY_SCRIPT" "$FIXTURE/scripts/"
-printf 'fixture-only-env=1\n' > "$FIXTURE/.env"
+cat > "$FIXTURE/.env" <<'EOF'
+TURN_SECRET_FILE=./secrets/turn_secret
+TURN_EXTERNAL_IP=198.51.100.25
+TURN_REALM=turn.fixture.test
+TURN_URLS=turn:turn.fixture.test:3478?transport=udp,turn:turn.fixture.test:3478?transport=tcp
+ALLOWED_ORIGINS=https://mirror.fixture.test
+EOF
 printf 'fixture-only-secret\n' > "$FIXTURE/secrets/turn_secret"
 
 export CALL_LOG="$FIXTURE/calls.log"
