@@ -208,7 +208,7 @@ class WebRTCService {
 		};
 		peerConnection.onicecandidateerror = (event) => {
 			if (this.peerConnection !== peerConnection) return;
-			this.recordError("ICE 候选收集失败", event);
+			this.recordError("ICE 候选收集失败", "候选收集失败");
 		};
 
 		assertCurrentConnection();

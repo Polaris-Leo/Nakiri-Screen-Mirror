@@ -50,13 +50,17 @@ export function normalizeWebRTCStats(
 		bitrate: numberOrUndefined(media?.bitrate ?? media?.targetBitrate),
 		bytesSent: numberOrUndefined(media?.bytesSent),
 		bytesReceived: numberOrUndefined(media?.bytesReceived),
-		candidateType:
-			localCandidate && remoteCandidate &&
-			typeof localCandidate.candidateType === "string"
-				? localCandidate.candidateType
-				: undefined,
+		candidateType: selectedPairPathType(localCandidate?.candidateType, remoteCandidate?.candidateType),
 		rttMs,
 	};
+}
+
+function selectedPairPathType(localType: unknown, remoteType: unknown): string | undefined {
+	const directTypes = new Set(["host", "srflx", "prflx"]);
+	if (localType === "relay" || remoteType === "relay") return "relay";
+	if (typeof localType !== "string" || typeof remoteType !== "string") return undefined;
+	if (!directTypes.has(localType) || !directTypes.has(remoteType)) return undefined;
+	return localType;
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

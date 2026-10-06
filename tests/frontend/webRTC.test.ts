@@ -226,6 +226,28 @@ describe("WebRTCService lifecycle", () => {
 		expect(peer.addTrack).toHaveBeenCalledOnce();
 	});
 
+	it("does not expose ICE candidate error event fields to diagnostics or console", async () => {
+		const peer = (await webRTCService.connect("123456")) as unknown as FakePeerConnection;
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+		const sensitive = {
+			address: "198.51.100.77",
+			port: 54321,
+			url: "turn:user:secret@turn.example.test",
+			errorText: "private network failure detail",
+		};
+
+		peer.onicecandidateerror?.(sensitive as unknown as RTCPeerConnectionIceErrorEvent);
+
+		const diagnostics = useWebRTCStore.getState();
+		expect(diagnostics.lastError).toBe("ICE 候选收集失败：候选收集失败");
+		expect(JSON.stringify(diagnostics)).not.toContain(JSON.stringify(sensitive));
+		expect(JSON.stringify(diagnostics)).not.toMatch(/198\.51\.100\.77|54321|turn:user:secret|private network failure detail/);
+		expect(consoleError).toHaveBeenCalledOnce();
+		expect(consoleError).toHaveBeenCalledWith("ICE 候选收集失败", "候选收集失败");
+		expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/198\.51\.100\.77|54321|turn:user:secret|private network failure detail/);
+		expect(consoleError.mock.calls.flat()).not.toContain(sensitive);
+	});
+
 	it("records ICE and signaling state changes for diagnostics", async () => {
 		const peer = (await webRTCService.connect("123456")) as unknown as FakePeerConnection;
 		peer.iceConnectionState = "checking";

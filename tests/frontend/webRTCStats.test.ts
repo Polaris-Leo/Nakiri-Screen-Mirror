@@ -31,6 +31,29 @@ describe("normalizeWebRTCStats", () => {
 		});
 	});
 
+	it.each([
+		["host", "relay"],
+		["relay", "host"],
+	] as const)("classifies selected %s + %s candidate pairs as relay", (localType, remoteType) => {
+		const normalized = normalizeWebRTCStats(report(
+			{ id: "pair", type: "candidate-pair", selected: true, localCandidateId: "local", remoteCandidateId: "remote", currentRoundTripTime: 0.04 },
+			{ id: "local", type: "local-candidate", candidateType: localType },
+			{ id: "remote", type: "remote-candidate", candidateType: remoteType },
+		), "receiver");
+
+		expect(normalized).toMatchObject({ candidateType: "relay", rttMs: 40 });
+	});
+
+	it.each(["unknown", undefined] as const)("leaves direct classification unavailable for remote type %s", (remoteType) => {
+		const normalized = normalizeWebRTCStats(report(
+			{ id: "pair", type: "candidate-pair", selected: true, localCandidateId: "local", remoteCandidateId: "remote", currentRoundTripTime: 0.04 },
+			{ id: "local", type: "local-candidate", candidateType: "host" },
+			{ id: "remote", type: "remote-candidate", ...(remoteType === undefined ? {} : { candidateType: remoteType }) },
+		), "receiver");
+
+		expect(normalized).toMatchObject({ candidateType: undefined, rttMs: 40 });
+	});
+
 	it("extracts a nominated relay candidate and its selected-pair RTT", () => {
 		const stats = report(
 			{ id: "pair", type: "candidate-pair", state: "succeeded", nominated: true, localCandidateId: "relay-local", remoteCandidateId: "remote", currentRoundTripTime: 0.04 },
