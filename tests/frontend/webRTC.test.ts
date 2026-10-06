@@ -308,6 +308,67 @@ describe("WebRTCService lifecycle", () => {
 		expect(FakePeerConnection.instances[1].addTrack).toHaveBeenCalledWith(track, expect.anything());
 	});
 
+	it("suppresses duplicate failure callbacks during restart until its answer deadline", async () => {
+		vi.useFakeTimers();
+		let resolveOffer!: (offer: RTCSessionDescriptionInit) => void;
+		FakePeerConnection.nextCreateOfferGate = () => new Promise((resolve) => { resolveOffer = resolve; });
+		const track = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
+		webRTCService.setLocalStream({ getTracks: () => [track] } as unknown as MediaStream);
+		const sendMessage = vi.spyOn(webSocketService, "sendMessage").mockReturnValue(true);
+		const first = (await webRTCService.connect("123456")) as unknown as FakePeerConnection;
+		useWebSocketStore.setState({ webSocketState: "connected" });
+
+		first.connectionState = "failed";
+		first.onconnectionstatechange?.();
+		await Promise.resolve();
+		first.connectionState = "disconnected";
+		first.onconnectionstatechange?.();
+		await vi.advanceTimersByTimeAsync(5_000);
+		resolveOffer({ type: "offer", sdp: "restart" });
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(first.createOffer).toHaveBeenCalledTimes(1);
+		expect(first.createOffer).toHaveBeenCalledWith({ iceRestart: true });
+		expect(sendMessage).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(9_999);
+		expect(FakePeerConnection.instances).toHaveLength(1);
+		expect(first.close).not.toHaveBeenCalled();
+		expect(first.createOffer).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(FakePeerConnection.instances).toHaveLength(2);
+	});
+
+	it("clears a duplicate queued failure when connected cancels a pending restart", async () => {
+		vi.useFakeTimers();
+		let resolveOffer!: (offer: RTCSessionDescriptionInit) => void;
+		FakePeerConnection.nextCreateOfferGate = () => new Promise((resolve) => { resolveOffer = resolve; });
+		const track = { kind: "video", stop: vi.fn() } as unknown as MediaStreamTrack;
+		webRTCService.setLocalStream({ getTracks: () => [track] } as unknown as MediaStream);
+		const sendMessage = vi.spyOn(webSocketService, "sendMessage").mockReturnValue(true);
+		const first = (await webRTCService.connect("123456")) as unknown as FakePeerConnection;
+		useWebSocketStore.setState({ webSocketState: "connected" });
+		first.connectionState = "failed";
+		first.onconnectionstatechange?.();
+		await Promise.resolve();
+		first.connectionState = "failed";
+		first.onconnectionstatechange?.();
+
+		first.connectionState = "connected";
+		first.onconnectionstatechange?.();
+		resolveOffer({ type: "offer", sdp: "restart" });
+		await Promise.resolve();
+		await Promise.resolve();
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(first.createOffer).toHaveBeenCalledTimes(1);
+		expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "offer" }));
+		expect(FakePeerConnection.instances).toHaveLength(1);
+		expect(first.close).not.toHaveBeenCalled();
+		expect(first.connectionState).toBe("connected");
+	});
+
 	it("does not send or rebuild when connected cancels a pending createOffer", async () => {
 		vi.useFakeTimers();
 		let resolveOffer!: (offer: RTCSessionDescriptionInit) => void;

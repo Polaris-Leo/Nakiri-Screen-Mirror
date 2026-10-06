@@ -47,3 +47,11 @@ The focused and full Vitest suites, project typecheck, and build could not be ex
 - Runtime test/typecheck limitation remains: both regression tests and type validation are unexecuted. No pass is claimed; run them in a provisioned pnpm/dependency environment.
 - Fresh handoff review confirmed the attempt-token guards suppress stale offer sends, timer creation, and rebuilds after cancellation. Follow-up fix also guards the restart catch diagnostic, resets queued recovery on a valid answer, and restores the brief-required `restartIceAndRenegotiate(peerConnection): Promise<boolean>` signature. The valid-answer deferred-rejection test now asserts that no stale error diagnostic is written.
 - Follow-up verification: `git diff --check` — passed (exit 0); test commands remain unavailable because `pnpm` is not installed. No tests/typecheck/build pass is claimed.
+
+## Fix round 2 — suppress duplicate recovery requests
+
+- Re-reviewed the latest finding against the source: `requestSenderRecovery()` set `reconnectRequested` before checking `recoveryAttemptPeer`, and the `finally` block drained the queued flag. A second event during deferred restart could therefore clear its answer timeout and trigger another offer. The connected-state branch already clears `reconnectRequested`; this was preserved and covered by an added test.
+- Added deterministic regressions for a disconnected grace callback firing while `createOffer()` remains deferred (one createOffer/offer, no second attempt or rebuild before the answer deadline), and for duplicate failure followed by `connected` while createOffer is pending (no offer send or rebuild; healthy original peer remains open).
+- Minimal fix: check the active peer lock before queuing a request and remove the unconditional `finally` queue drain. Later failures after the active lock has been cleared still set a new request and start recovery normally.
+- Required focused test attempt `pnpm test -- tests/frontend/webRTC.test.ts` — exit 1, PowerShell `CommandNotFoundException` (`pnpm` unavailable); did not install dependencies. Tests remain unexecuted; no runtime pass claimed.
+- `git diff --check` — passed after round 2 edits (exit 0, no output).

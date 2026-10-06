@@ -302,8 +302,8 @@ class WebRTCService {
 
 	private requestSenderRecovery() {
 		if (this.role !== "sender" || !this.localStream || !this.peerId) return;
-		this.reconnectRequested = true;
 		if (this.recoveryAttemptPeer === this.peerConnection) return;
+		this.reconnectRequested = true;
 		void this.recoverSenderConnection();
 	}
 
@@ -372,10 +372,6 @@ class WebRTCService {
 			if (isCurrentAttempt()) this.rebuildSenderConnection(peerConnection, requestGeneration, peerId);
 		} finally {
 			this.recovering = false;
-			if (this.reconnectRequested && this.peerConnection === peerConnection) {
-				this.clearIceRestartRecovery(peerConnection);
-				void this.recoverSenderConnection();
-			}
 		}
 	}
 
