@@ -61,7 +61,7 @@ chmod 600 secrets/turn_secret
 
 确认 `TURN_SECRET_FILE=./secrets/turn_secret` 指向上述文件。`TURN_URLS` 的主机名必须是 TURN 主机自身的公网 DNS 名称，解析到 coturn 公网 IP；DNS 记录须为 DNS-only/直连，不能使用 EdgeOne/CDN 代理。`TURN_EXTERNAL_IP` 应为该 coturn 主机公网地址。请在真实值生效后再开放服务。
 
-以文件型 Docker Secret 将同一主机密钥挂载给 Node 和 coturn：Node 从 `/run/secrets/turn_secret` 生成短期 HMAC 凭据，coturn 启动脚本在容器内创建受限权限的运行配置。密钥文件和 `.env` 已被忽略，不要提交、记录到日志、放进镜像/命令行或设置为 `VITE_*`。
+以文件型 Docker Secret 将同一主机密钥挂载给 Node 和 coturn：Node 从 `/run/secrets/turn_secret` 生成短期 HMAC 凭据，coturn 启动脚本在容器内创建受限权限的运行配置。部署脚本会将主机密钥保持为 `0600`、目录保持为 `0700`，并把文件属主设为 pinned Coturn 镜像的 `nobody:nogroup`（UID/GID `65534:65534`）；因此运行脚本的账户必须有权限执行 `chown`（例如以 root 运行）。密钥文件和 `.env` 已被忽略，不要提交、记录到日志、放进镜像/命令行或设置为 `VITE_*`。
 
 脚本会在部署前运行 `docker compose config --quiet`，随后以 `docker compose up -d --build --remove-orphans` 启动容器。容器在后台 detached 运行；部署脚本本身保持前台运行，等待健康检查并按需执行公网 WSS 探针，再显示容器状态。`/healthz` 只表示 Node HTTP 服务存活。该命令会更改本机 Compose 服务状态，不是只读验证；仅在明确要部署/更新服务时运行：
 
