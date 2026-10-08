@@ -19,7 +19,7 @@ services:
       - turn_secret
 
   coturn:
-    image: coturn/coturn:4.6.3
+    image: docker.xuanyuan.run/coturn/coturn:4.6.3
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/opt/coturn/entrypoint.sh"]
     environment:
