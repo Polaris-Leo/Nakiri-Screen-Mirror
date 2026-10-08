@@ -19,11 +19,21 @@ case "$*" in
     if [[ "${CHECK_SECRET_MODES:-0}" == 1 ]]; then
       [[ "$(stat -c '%a' "$CONFIG_CHECK_ROOT/secrets")" == 700 ]] || { printf '%s\n' 'FAIL: secrets directory mode was not 700 at Compose config time' >&2; exit 1; }
       [[ "$(stat -c '%a' "$CONFIG_CHECK_ROOT/secrets/turn_secret")" == 600 ]] || { printf '%s\n' 'FAIL: secret file mode was not 600 at Compose config time' >&2; exit 1; }
+      grep -Fxq "65534:65534 $CONFIG_CHECK_ROOT/secrets/turn_secret" "$CONFIG_CHECK_ROOT/chown.log" || { printf '%s\n' 'FAIL: Coturn secret owner was not set before Compose config' >&2; exit 1; }
     fi
     exit 0
     ;;
   *) exit 99 ;;
 esac
+EOF
+  cat > "$root/bin/chown" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\n' "$*" >> "$PWD/chown.log"
+if [[ "${FAIL_SECRET_CHOWN:-0}" == 1 ]]; then
+  printf '%s\n' 'simulated chown failure' >&2
+  exit 1
+fi
 EOF
   cat > "$root/bin/openssl" <<'EOF'
 #!/usr/bin/env bash
@@ -34,7 +44,7 @@ EOF
 #!/usr/bin/env bash
 exit 0
 EOF
-  chmod +x "$root/bin/docker" "$root/bin/openssl" "$root/bin/curl"
+  chmod +x "$root/bin/docker" "$root/bin/chown" "$root/bin/openssl" "$root/bin/curl"
 }
 
 assert_contains() {
@@ -71,6 +81,7 @@ assert_contains "$success/.env" 'TURN_CREDENTIAL_TTL_SECONDS=3600'
 assert_contains "$success/.env" 'TRUST_PROXY=false'
 [[ "$(<"$success/secrets/turn_secret")" == 'test-secret-not-production' ]] || { printf 'FAIL: secret file content mismatch\n' >&2; exit 1; }
 [[ "$(stat -c '%a' "$success/secrets/turn_secret")" == 600 ]] || { printf 'FAIL: secret file mode is not 600\n' >&2; exit 1; }
+assert_contains "$success/chown.log" "65534:65534 $success/secrets/turn_secret"
 [[ "$(stat -c '%a' "$success/secrets")" == 700 ]] || { printf 'FAIL: secrets directory mode is not 700\n' >&2; exit 1; }
 if [[ "$output" == *'test-secret-not-production'* ]]; then
   printf 'FAIL: secret appeared in captured output\n' >&2
@@ -178,6 +189,20 @@ if grep -Fxq 'compose config --quiet' "$permission_failure/docker.log"; then
   exit 1
 fi
 assert_no_up "$permission_failure/docker.log"
+
+ownership_failure="$fixture/ownership-failure"
+make_fixture "$ownership_failure"
+if (cd "$ownership_failure" && PATH="$ownership_failure/bin:$PATH" FAIL_SECRET_CHOWN=1 DOCKER_CALL_LOG="$ownership_failure/docker.log" TURN_EXTERNAL_IP=198.51.100.25 TURN_REALM=turn.example.net ALLOWED_ORIGINS=https://mirror.example.net WSS_URL= bash scripts/deploy-docker.sh >"$ownership_failure/output.log" 2>&1); then
+  printf 'FAIL: a Coturn secret ownership failure should abort deployment\n' >&2
+  exit 1
+fi
+grep -Fq '无法将 secrets/turn_secret 属主设置为 Coturn 用户' "$ownership_failure/output.log" || { printf 'FAIL: ownership failure should provide a useful error\n' >&2; exit 1; }
+[[ -s "$ownership_failure/secrets/turn_secret" && ! -e "$ownership_failure/.env" ]] || { printf 'FAIL: ownership failure should stop before writing .env\n' >&2; exit 1; }
+if grep -Fxq 'compose config --quiet' "$ownership_failure/docker.log"; then
+  printf 'FAIL: ownership failure reached Compose config\n' >&2
+  exit 1
+fi
+assert_no_up "$ownership_failure/docker.log"
 
 missing="$fixture/missing"
 make_fixture "$missing"

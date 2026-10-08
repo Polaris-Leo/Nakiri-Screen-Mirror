@@ -30,6 +30,11 @@ resolve_value() {
   printf -v "$variable" '%s' "$value"
 }
 
+secure_secret_file() {
+  chmod 600 "$SECRET_FILE" || setup_error '无法设置 secrets/turn_secret 权限。'
+  chown 65534:65534 "$SECRET_FILE" || setup_error '无法将 secrets/turn_secret 属主设置为 Coturn 用户 UID/GID 65534:65534；请以 root 运行部署脚本。'
+}
+
 secure_existing_secret_paths() {
   local require_secret="${1:-0}"
   local secrets_dir="$PROJECT_ROOT/secrets"
@@ -58,7 +63,7 @@ secure_existing_secret_paths() {
 
   chmod 700 "$secrets_dir" || setup_error '无法设置 secrets 目录权限。'
   if [[ -e "$SECRET_FILE" ]]; then
-    chmod 600 "$SECRET_FILE" || setup_error '无法设置 secrets/turn_secret 权限。'
+    secure_secret_file
   fi
 }
 
@@ -148,7 +153,7 @@ bootstrap_env() {
       rm -f "$SECRET_FILE"
       setup_error 'OpenSSL 未生成有效的 TURN Secret。'
     fi
-    chmod 600 "$SECRET_FILE"
+    secure_secret_file
   fi
 
   local temp_env

@@ -64,7 +64,12 @@ cat > "$FIXTURE/bin/curl" <<'FAKE_CURL'
 #!/usr/bin/env bash
 exit 0
 FAKE_CURL
-chmod +x "$FIXTURE/bin/git" "$FIXTURE/bin/docker" "$FIXTURE/bin/curl"
+cat > "$FIXTURE/bin/chown" <<'FAKE_CHOWN'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'chown:%s\n' "$*" >> "$CALL_LOG"
+FAKE_CHOWN
+chmod +x "$FIXTURE/bin/git" "$FIXTURE/bin/docker" "$FIXTURE/bin/curl" "$FIXTURE/bin/chown"
 export PATH="$FIXTURE/bin:$PATH"
 export WSS_URL=""
 export MAX_ATTEMPTS=1
@@ -85,10 +90,11 @@ run_upgrade || fail 'clean checkout upgrade should succeed'
 cli_line="$(line_number 'docker:info')"
 compose_version_line="$(line_number 'docker:compose version')"
 pull_line="$(line_number git-pull)"
+chown_line="$(line_number "chown:65534:65534 $FIXTURE/secrets/turn_secret")"
 config_line="$(line_number 'docker:compose config --quiet')"
 up_line="$(line_number 'docker:compose up -d --build --remove-orphans')"
-[[ -n "$cli_line" && -n "$compose_version_line" && -n "$pull_line" && -n "$config_line" && -n "$up_line" ]] || fail 'success path omitted expected Git or Docker calls'
-(( cli_line < compose_version_line && compose_version_line < pull_line && pull_line < config_line && config_line < up_line )) || fail 'Docker preflight, pull, and Compose deployment were not ordered correctly'
+[[ -n "$cli_line" && -n "$compose_version_line" && -n "$pull_line" && -n "$chown_line" && -n "$config_line" && -n "$up_line" ]] || fail 'success path omitted expected Git, ownership, or Docker calls'
+(( cli_line < compose_version_line && compose_version_line < pull_line && pull_line < chown_line && chown_line < config_line && config_line < up_line )) || fail 'Docker preflight, pull, secret ownership, and Compose deployment were not ordered correctly'
 
 reset_case
 FAKE_DOCKER_INFO_STATUS=1 run_upgrade >/dev/null 2>&1 && fail 'failing docker info should be rejected'

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const compose = readFileSync(new URL("../../docker-compose.yml", import.meta.url), "utf8");
+const deployScript = readFileSync(new URL("../../scripts/deploy-docker.sh", import.meta.url), "utf8");
 const turnTemplatePath = new URL("../../deploy/coturn/turnserver.conf", import.meta.url);
 const coturnEntrypointPath = new URL("../../deploy/coturn/entrypoint.sh", import.meta.url);
 const turnTemplate = existsSync(turnTemplatePath) ? readFileSync(turnTemplatePath, "utf8") : "";
@@ -30,9 +31,20 @@ describe("Docker TURN relay configuration", () => {
 		expect(turnTemplate).toMatch(/max-port=49200/);
 	});
 
-	it("keeps the tracked coturn template secret-free and denies anonymous use", () => {
-		expect(turnTemplate).toMatch(/no-anonymous/);
+	it("keeps the tracked coturn template secret-free and enables shared-secret authentication", () => {
+		expect(turnTemplate).toMatch(/^lt-cred-mech$/m);
+		expect(turnTemplate).toMatch(/^use-auth-secret$/m);
 		expect(turnTemplate).not.toMatch(/static-auth-secret\s*=/);
+	});
+
+	it("does not use unsupported Coturn configuration directives", () => {
+		expect(turnTemplate).not.toMatch(/^\s*no-anonymous\s*$/m);
+		expect(turnTemplate).not.toMatch(/^\s*no-loopback-peers\s*$/m);
+	});
+
+	it("sets the Coturn image user's secret ownership without loosening file permissions", () => {
+		expect(deployScript).toContain('chown 65534:65534 "$SECRET_FILE"');
+		expect(deployScript).toContain('chmod 600 "$SECRET_FILE"');
 	});
 
 	it("renders authentication from the mounted secret into a private runtime config", () => {
