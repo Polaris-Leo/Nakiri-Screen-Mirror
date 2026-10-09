@@ -48,7 +48,7 @@ describe("Docker TURN relay configuration", () => {
 	});
 
 	it("runs Coturn in the foreground with a supported config argument", () => {
-		expect(coturnEntrypoint).toContain('exec turnserver --config="$config_file"');
+		expect(coturnEntrypoint).toContain('exec turnserver -c "$config_file"');
 		expect(coturnEntrypoint).not.toMatch(/--(?:no-)?daemon/);
 	});
 
