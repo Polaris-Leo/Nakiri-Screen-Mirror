@@ -26,4 +26,4 @@ fi
 printf 'static-auth-secret=%s\n' "$secret" >> "$config_file"
 unset secret
 chmod 600 "$config_file"
-exec turnserver --config="$config_file"
+exec turnserver -c "$config_file"
