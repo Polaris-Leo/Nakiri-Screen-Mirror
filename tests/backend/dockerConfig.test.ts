@@ -47,6 +47,11 @@ describe("Docker TURN relay configuration", () => {
 		expect(deployScript).toContain('chmod 600 "$SECRET_FILE"');
 	});
 
+	it("runs Coturn in the foreground with a supported config argument", () => {
+		expect(coturnEntrypoint).toContain('exec turnserver --config="$config_file"');
+		expect(coturnEntrypoint).not.toMatch(/--(?:no-)?daemon/);
+	});
+
 	it("renders authentication from the mounted secret into a private runtime config", () => {
 		expect(coturnEntrypoint).toContain("/run/secrets/turn_secret");
 		expect(turnTemplate).toMatch(/use-auth-secret/);
